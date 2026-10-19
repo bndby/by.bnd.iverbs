@@ -1,0 +1,708 @@
+<!-- Три облика четырёх поверхностей по фазам хода, переключение через ?variant=A|B|C.
+     Приложения ещё нет, поэтому маршрут — этот файл. PROTOTYPE, выкинуть.
+     Запуск: python3 -m http.server 8734 -->
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Прототип · облик</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: #d7d2ca;
+    color: #111;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+  button { font: inherit; cursor: pointer; }
+  #desk {
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 16px 16px 0;
+  }
+  #phone {
+    width: min(390px, 100%);
+    height: min(844px, calc(100dvh - 290px));
+    background: #111;
+    border-radius: 28px;
+    padding: 10px;
+    box-shadow: 0 18px 50px rgba(0,0,0,.25);
+  }
+  #screen {
+    height: 100%;
+    border-radius: 20px;
+    overflow: hidden;
+    background: #fff;
+  }
+  #screen > * { height: 100%; }
+  #proto {
+    position: fixed;
+    left: 50%;
+    bottom: 14px;
+    transform: translateX(-50%);
+    z-index: 5;
+    width: min(720px, calc(100% - 24px));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  #state, #hint {
+    margin: 0;
+    background: #111;
+    color: #fff;
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 12px;
+  }
+  #hint { background: transparent; color: #111; padding: 0; }
+  #jumps { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+  #jumps button {
+    background: #fff;
+    border: 1px solid #111;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+  #bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: #111;
+    color: #fff;
+    border-radius: 999px;
+    padding: 8px 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.3);
+  }
+  #bar button {
+    background: #fff;
+    color: #111;
+    border: 0;
+    border-radius: 999px;
+    width: 36px;
+    height: 36px;
+  }
+
+  /* A Крупно */
+  .a { display: flex; flex-direction: column; background: #f3efe6; color: #1c1915; font-family: Georgia, "Iowan Old Style", serif; }
+  .a-home { height: 100%; display: flex; flex-direction: column; }
+  .a-home button {
+    flex: 1;
+    border: 0;
+    border-bottom: 1px solid #1c1915;
+    background: transparent;
+    text-align: left;
+    padding: 0 28px;
+    font-size: 48px;
+  }
+  .a-home button:last-child { border-bottom: 0; }
+  .a-top, .a-foot { flex-shrink: 0; display: flex; gap: 8px; padding: 12px; }
+  .a-top button, .a-foot button {
+    border: 1px solid #1c1915;
+    background: transparent;
+    padding: 12px;
+    font-size: 16px;
+  }
+  .a-foot { flex-direction: column; }
+  .a-foot .primary { background: #1c1915; color: #f3efe6; font-size: 22px; }
+  .a-main { flex: 1; min-height: 0; overflow: auto; padding: 8px 24px 16px; }
+  .a-kicker { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; margin: 8px 0; }
+  .a-ru { font-size: 40px; line-height: 1.05; margin: 0 0 16px; }
+  .a-en { font-size: 36px; line-height: 1.05; margin: 0; }
+  .a-forms { margin-top: 12px; }
+  .a-forms div { font-size: 32px; line-height: 1.15; }
+  .a-heard { margin-top: 20px; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 18px; }
+  .a-reason { font-size: 34px; line-height: 1.1; margin: 12px 0; }
+  .a-row {
+    width: 100%;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    text-align: left;
+    border: 0;
+    border-bottom: 1px solid #1c1915;
+    background: transparent;
+    padding: 14px 4px;
+  }
+  .a-mark {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    border: 1px solid #1c1915;
+    display: grid;
+    place-items: center;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+  .a-row.on .a-mark { background: #1c1915; color: #f3efe6; }
+  .a-row b { display: block; font-size: 22px; font-weight: 400; }
+  .a-row small { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; }
+
+  /* B Рельс */
+  .b { display: flex; background: #12161c; color: #ece7dc; font-family: ui-sans-serif, system-ui, sans-serif; }
+  .b-rail { width: 108px; flex-shrink: 0; display: flex; flex-direction: column; background: #0b0e12; }
+  .b-rail button {
+    flex: 1;
+    border: 0;
+    border-bottom: 1px solid #2c343f;
+    background: transparent;
+    color: inherit;
+    font-size: 15px;
+  }
+  .b-rail .here { background: #e6ff4d; color: #111; }
+  .b-stage { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .b-steps { display: flex; flex-shrink: 0; background: #0b0e12; }
+  .b-steps span { flex: 1; text-align: center; padding: 10px 2px; font-size: 12px; color: #8d97a3; }
+  .b-steps .now { background: #e6ff4d; color: #111; }
+  .b-body { flex: 1; min-height: 0; overflow: auto; padding: 16px; }
+  .b-title { font-size: 28px; margin: 0 0 8px; }
+  .b-quiet { color: #b7c0c8; margin: 0; }
+  .b-line { font-size: 20px; margin: 0 0 6px; }
+  .b-heard { margin-top: 16px; padding-top: 12px; border-top: 1px solid #2c343f; }
+  .b-actions { flex-shrink: 0; display: flex; gap: 6px; padding: 10px; }
+  .b-actions button { flex: 1; border: 0; background: #243040; color: inherit; padding: 14px 4px; }
+  .b-actions .primary { background: #e6ff4d; color: #111; }
+  .b-verb {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-align: left;
+    border: 0;
+    border-bottom: 1px solid #2c343f;
+    background: transparent;
+    color: inherit;
+    padding: 10px 0;
+  }
+  .b-verb .en { width: 92px; flex-shrink: 0; font-variant: small-caps; }
+  .b-verb .ru { flex: 1; color: #b7c0c8; font-size: 14px; }
+  .b-sw { width: 36px; height: 20px; border-radius: 999px; background: #2c343f; position: relative; flex-shrink: 0; }
+  .b-sw i { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #ece7dc; }
+  .b-verb.on .b-sw { background: #e6ff4d; }
+  .b-verb.on .b-sw i { left: 18px; }
+
+  /* C Шов */
+  .c { display: flex; flex-direction: column; font-family: "Arial Narrow", "Helvetica Neue", sans-serif; }
+  .c-top, .c-bot { flex: 1; min-height: 0; overflow: auto; padding: 16px; position: relative; }
+  .c-top { background: #f2f2f2; color: #111; }
+  .c-bot { background: #141414; color: #f2f2f2; }
+  .c-seam { flex-shrink: 0; background: #ff4d00; color: #111; text-align: center; }
+  .c-seam button, .c-homehalf {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 14px;
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .c-homehalf { height: 100%; font-size: 56px; text-align: left; }
+  .c-corner { display: flex; justify-content: space-between; gap: 8px; }
+  .c-corner button { border: 0; background: transparent; color: inherit; padding: 0; font-size: 14px; text-decoration: underline; }
+  .c-big { font-size: 42px; line-height: 1; margin: 18px 0 0; font-weight: 700; }
+  .c-sub { font-size: 28px; margin: 8px 0 0; }
+  .c-tag { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; margin: 0; }
+  .c-verbs { height: 100%; display: flex; flex-direction: column; background: #f2f2f2; color: #111; }
+  .c-verbbar { flex-shrink: 0; display: flex; justify-content: space-between; padding: 12px 14px; background: #ff4d00; }
+  .c-verbbar button { border: 0; background: transparent; font-weight: 700; }
+  .c-grid { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: 1fr 1fr; align-content: start; }
+  .c-cell { border: 0; border-bottom: 1px solid #ddd; border-right: 1px solid #ddd; background: #fff; text-align: left; padding: 10px; min-height: 64px; }
+  .c-cell.on { background: #141414; color: #f2f2f2; }
+  .c-cell b { display: block; font-size: 15px; }
+  .c-cell small { font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="desk"><div id="phone"><div id="screen"></div></div></div>
+<div id="proto">
+  <p id="hint">Переключатель прототипа, не часть облика. Клавиши ← →</p>
+  <p id="state"></p>
+  <div id="jumps">
+    <button type="button" data-jump="phrase">Фраза кончилась</button>
+    <button type="button" data-jump="match">Совпало</button>
+    <button type="button" data-jump="miss">Не совпало</button>
+    <button type="button" data-jump="mic">Нет микрофона</button>
+    <button type="button" data-jump="model">Модель</button>
+    <button type="button" data-jump="asr">Распознавание</button>
+    <button type="button" data-jump="all-off">Снять все</button>
+    <button type="button" data-jump="all-on">Отметить все</button>
+  </div>
+  <div id="bar">
+    <button type="button" id="prev" aria-label="Предыдущий облик">←</button>
+    <span id="label">A · Крупно</span>
+    <button type="button" id="next-variant" aria-label="Следующий облик">→</button>
+  </div>
+</div>
+<script>
+const VERBS = [
+  ["be","быть",["be","was","been"]],
+  ["begin","начинаться",["begin","began","begun"]],
+  ["break","ломать",["break","broke","broken"]],
+  ["bring","приносить",["bring","brought","brought"]],
+  ["buy","покупать",["buy","bought","bought"]],
+  ["build","строить",["build","built","built"]],
+  ["choose","выбирать",["choose","chose","chosen"]],
+  ["come","приходить",["come","came","come"]],
+  ["cost","стоить",["cost","cost","cost"]],
+  ["cut","резать",["cut","cut","cut"]],
+  ["do","делать",["do","did","done"]],
+  ["draw","рисовать",["draw","drew","drawn"]],
+  ["drive","ехать",["drive","drove","driven"]],
+  ["eat","есть",["eat","ate","eaten"]],
+  ["feel","чувствовать",["feel","felt","felt"]],
+  ["find","находить",["find","found","found"]],
+  ["get","приобретать",["get","got","got"]],
+  ["give","давать",["give","gave","given"]],
+  ["go","идти",["go","went","gone"]],
+  ["have","иметь",["have","had","had"]],
+  ["hear","слышать",["hear","heard","heard"]],
+  ["hold","держать",["hold","held","held"]],
+  ["keep","хранить",["keep","kept","kept"]],
+  ["know","знать",["know","knew","known"]],
+  ["leave","уходить",["leave","left","left"]],
+  ["lead","вести",["lead","led","led"]],
+  ["let","позволять",["let","let","let"]],
+  ["lie","лежать",["lie","lay","lain"]],
+  ["lose","терять",["lose","lost","lost"]],
+  ["make","делать или создавать",["make","made","made"]],
+  ["mean","значить",["mean","meant","meant"]],
+  ["meet","встречать",["meet","met","met"]],
+  ["pay","платить",["pay","paid","paid"]],
+  ["put","класть",["put","put","put"]],
+  ["run","бежать",["run","ran","run"]],
+  ["say","говорить или сказать",["say","said","said"]],
+  ["see","видеть",["see","saw","seen"]],
+  ["sell","продавать",["sell","sold","sold"]],
+  ["send","посылать",["send","sent","sent"]],
+  ["set","назначать",["set","set","set"]],
+  ["sit","сидеть",["sit","sat","sat"]],
+  ["speak","говорить",["speak","spoke","spoken"]],
+  ["spend","тратить",["spend","spent","spent"]],
+  ["stand","стоять",["stand","stood","stood"]],
+  ["take","брать",["take","took","taken"]],
+  ["teach","преподавать",["teach","taught","taught"]],
+  ["tell","говорить или рассказывать",["tell","told","told"]],
+  ["think","думать",["think","thought","thought"]],
+  ["understand","понимать",["understand","understood","understood"]],
+  ["wear","носить",["wear","wore","worn"]],
+  ["win","побеждать",["win","won","won"]],
+  ["write","писать",["write","wrote","written"]]
+].map(([en, ru, forms]) => ({ en, ru, forms }));
+
+const LABELS = { A: "A · Крупно", B: "B · Рельс", C: "C · Шов" };
+const REASONS = {
+  mic: "Нет разрешения микрофона",
+  model: "Модель не открылась",
+  asr: "Распознавание не стартовало"
+};
+
+const state = {
+  surface: "home",
+  phase: "speaking",
+  playing: false,
+  verdict: "match",
+  reason: "mic",
+  paused: false,
+  returnTo: null,
+  current: VERBS.findIndex((v) => v.en === "say"),
+  marked: new Set(VERBS.map((_, i) => i))
+};
+
+function esc(s) {
+  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+function verb() { return VERBS[state.current]; }
+function markedList() { return [...state.marked]; }
+function randomMarked() {
+  const list = markedList();
+  return list[Math.floor(Math.random() * list.length)];
+}
+function variant() {
+  const v = new URLSearchParams(location.search).get("variant");
+  return v === "B" || v === "C" ? v : "A";
+}
+function setVariant(v) {
+  const url = new URL(location.href);
+  url.searchParams.set("variant", v);
+  history.replaceState(null, "", url);
+  render();
+}
+function cycle(step) {
+  const order = ["A", "B", "C"];
+  const i = order.indexOf(variant());
+  setVariant(order[(i + step + order.length) % order.length]);
+}
+function inMode() {
+  return state.surface === "learn" || state.surface === "check";
+}
+function modeName(mode) {
+  return mode === "check" ? "Проверка" : "Учим";
+}
+
+function goHome() {
+  state.surface = "home";
+  state.returnTo = null;
+  state.paused = false;
+  state.playing = false;
+}
+function goVerbs() {
+  if (inMode()) {
+    state.returnTo = state.surface;
+    state.paused = true;
+    state.playing = false;
+  }
+  state.surface = "verbs";
+}
+function backToTurn() {
+  if (!state.returnTo) { goHome(); return; }
+  state.surface = state.returnTo;
+  state.paused = false;
+  state.playing = false;
+}
+function startMode(mode) {
+  if (state.returnTo === mode && state.surface === "verbs") {
+    backToTurn();
+    return;
+  }
+  if (state.surface === mode) return;
+  if (state.marked.size === 0) {
+    state.surface = "verbs";
+    state.returnTo = null;
+    state.paused = false;
+    state.playing = false;
+    return;
+  }
+  if (!state.marked.has(state.current)) state.current = randomMarked();
+  state.surface = mode;
+  state.phase = "speaking";
+  state.playing = true;
+  state.paused = false;
+  state.returnTo = null;
+}
+function again() {
+  if (!inMode()) return;
+  state.phase = "speaking";
+  state.playing = true;
+}
+function nextVerb() {
+  if (state.phase !== "listening" && state.phase !== "verdict") return;
+  if (state.marked.size === 0) {
+    state.surface = "verbs";
+    state.returnTo = null;
+    state.paused = false;
+    state.playing = false;
+    return;
+  }
+  state.current = randomMarked();
+  state.phase = "speaking";
+  state.playing = true;
+}
+function done() {
+  if (state.phase !== "listening") return;
+  state.phase = "verdict";
+  state.verdict = "match";
+  state.playing = false;
+}
+function endPhrase() {
+  if (!inMode()) return;
+  if (state.phase === "speaking") {
+    state.phase = "listening";
+    state.playing = false;
+  } else if (state.phase === "listening") {
+    done();
+  }
+}
+function ensureMode() {
+  if (inMode()) return true;
+  if (state.marked.size === 0) {
+    state.surface = "verbs";
+    state.returnTo = null;
+    state.paused = false;
+    state.playing = false;
+    return false;
+  }
+  if (!state.marked.has(state.current)) state.current = randomMarked();
+  state.surface = "learn";
+  state.returnTo = null;
+  state.paused = false;
+  return true;
+}
+function jump(kind) {
+  if (kind === "all-on") {
+    state.marked = new Set(VERBS.map((_, i) => i));
+    return;
+  }
+  if (kind === "all-off") {
+    state.marked = new Set();
+    return;
+  }
+  if (kind === "phrase") { endPhrase(); return; }
+  if (!ensureMode()) return;
+  state.playing = false;
+  if (kind === "match" || kind === "miss") {
+    state.phase = "verdict";
+    state.verdict = kind;
+  } else {
+    state.phase = "blocked";
+    state.reason = kind;
+  }
+}
+function toggle(i) {
+  i = Number(i);
+  if (state.marked.has(i)) state.marked.delete(i);
+  else state.marked.add(i);
+}
+function act(name, arg) {
+  if (name === "home") goHome();
+  else if (name === "verbs") goVerbs();
+  else if (name === "learn") startMode("learn");
+  else if (name === "check") startMode("check");
+  else if (name === "back") backToTurn();
+  else if (name === "again") again();
+  else if (name === "next") nextVerb();
+  else if (name === "done") done();
+  else if (name === "toggle") toggle(arg);
+  render();
+}
+
+function heardText() {
+  const v = verb();
+  if (state.verdict === "match") return v.forms.join(" ");
+  return `${v.forms[1]} ${v.forms[1]} ${v.forms[1]}`;
+}
+function showNext() {
+  return state.phase === "listening" || state.phase === "verdict";
+}
+function showDone() {
+  return state.phase === "listening";
+}
+
+function renderA() {
+  if (state.surface === "home") {
+    return `<div class="a"><div class="a-home">
+      <button type="button" data-act="learn">Учим</button>
+      <button type="button" data-act="check">Проверка</button>
+      <button type="button" data-act="verbs">Глаголы</button>
+    </div></div>`;
+  }
+  const top = `<div class="a-top">
+    <button type="button" data-act="home">Главная</button>
+    ${state.surface === "verbs"
+      ? (state.returnTo ? `<button type="button" data-act="back">К ходу</button>` : "")
+      : `<button type="button" data-act="verbs">Глаголы</button>`}
+  </div>`;
+  if (state.surface === "verbs") {
+    const rows = VERBS.map((v, i) => {
+      const on = state.marked.has(i);
+      return `<button type="button" class="a-row${on ? " on" : ""}" data-act="toggle" data-arg="${i}" aria-pressed="${on}">
+        <span class="a-mark">${on ? "✓" : ""}</span>
+        <span><b>${esc(v.ru)}</b><small>${esc(v.en)}</small></span>
+      </button>`;
+    }).join("");
+    return `<div class="a">${top}<div class="a-main" data-scroll>${rows}</div></div>`;
+  }
+  const v = verb();
+  let body = "";
+  if (state.phase === "blocked") {
+    body = `<p class="a-kicker">${esc(v.en)}</p><p class="a-reason">${esc(REASONS[state.reason])}</p>`;
+  } else if (state.phase === "verdict") {
+    const title = state.verdict === "match" ? "Совпало" : "Не совпало";
+    body = `<p class="a-ru">${esc(title)}</p>
+      <div class="a-forms">${v.forms.map((f) => `<div>${esc(f)}</div>`).join("")}</div>
+      <p class="a-heard">${esc(heardText())}</p>`;
+  } else if (state.surface === "check") {
+    body = `<p class="a-en">${esc(v.en)}</p>`;
+  } else if (state.phase === "speaking") {
+    body = `${state.playing ? `<p class="a-kicker">Говорит</p>` : `<p class="a-kicker">Ход ждёт</p>`}
+      <p class="a-ru">${esc(v.ru)}</p>
+      <div class="a-forms">${v.forms.map((f) => `<div>${esc(f)}</div>`).join("")}</div>`;
+  } else {
+    body = `<p class="a-ru">${esc(v.ru)}</p>`;
+  }
+  const foot = [];
+  if (showDone()) foot.push(`<button type="button" class="primary" data-act="done">Готово</button>`);
+  foot.push(`<button type="button" data-act="again">Ещё раз</button>`);
+  if (showNext()) foot.push(`<button type="button" data-act="next">Дальше</button>`);
+  return `<div class="a">${top}<div class="a-main">${body}</div><div class="a-foot">${foot.join("")}</div></div>`;
+}
+
+function steps() {
+  if (state.phase === "blocked") {
+    return `<div class="b-steps"><span>Говорим</span><span>Слушаем</span><span>Вердикт</span></div>`;
+  }
+  const labels = ["Говорим", "Слушаем", "Вердикт"];
+  const phases = ["speaking", "listening", "verdict"];
+  return `<div class="b-steps">${labels.map((label, i) => `<span class="${phases[i] === state.phase ? "now" : ""}">${label}</span>`).join("")}</div>`;
+}
+function rail() {
+  const item = (actName, label, on) =>
+    `<button type="button" class="${on ? "here" : ""}" data-act="${actName}">${label}</button>`;
+  return `<nav class="b-rail">
+    ${item("home", "Главная", state.surface === "home")}
+    ${item("learn", "Учим", state.surface === "learn")}
+    ${item("check", "Проверка", state.surface === "check")}
+    ${item("verbs", "Глаголы", state.surface === "verbs")}
+  </nav>`;
+}
+function bActions() {
+  if (!inMode()) return "";
+  const buttons = [];
+  if (showDone()) buttons.push(`<button type="button" class="primary" data-act="done">Готово</button>`);
+  buttons.push(`<button type="button" data-act="again">Ещё раз</button>`);
+  if (showNext()) buttons.push(`<button type="button" data-act="next">Дальше</button>`);
+  return `<div class="b-actions">${buttons.join("")}</div>`;
+}
+function renderB() {
+  let body = "";
+  let head = "";
+  if (state.surface === "home") {
+    body = `<p class="b-quiet">В списке ${state.marked.size}</p><p class="b-title">${esc(verb().en)}</p>`;
+  } else if (state.surface === "verbs") {
+    body = VERBS.map((v, i) => {
+      const on = state.marked.has(i);
+      return `<button type="button" class="b-verb${on ? " on" : ""}" data-act="toggle" data-arg="${i}" aria-pressed="${on}">
+        <span class="en">${esc(v.en)}</span><span class="ru">${esc(v.ru)}</span><span class="b-sw"><i></i></span>
+      </button>`;
+    }).join("");
+  } else if (state.phase === "blocked") {
+    head = steps();
+    body = `<p class="b-quiet">${esc(verb().en)}</p><p class="b-title">${esc(REASONS[state.reason])}</p>`;
+  } else if (state.phase === "verdict") {
+    head = steps();
+    const title = state.verdict === "match" ? "Совпало" : "Не совпало";
+    body = `<p class="b-title">${title}</p>
+      ${verb().forms.map((f) => `<p class="b-line">${esc(f)}</p>`).join("")}
+      <p class="b-heard">${esc(heardText())}</p>`;
+  } else if (state.surface === "check") {
+    head = steps();
+    body = `<p class="b-title">${esc(verb().en)}</p>`;
+  } else {
+    head = steps();
+    const v = verb();
+    body = `${state.playing ? `<p class="b-quiet">Говорит</p>` : `<p class="b-quiet">Ход ждёт</p>`}
+      <p class="b-title">${esc(v.ru)}</p>
+      ${state.phase === "speaking" || state.phase === "listening"
+        ? v.forms.map((f) => `<p class="b-line">${esc(f)}</p>`).join("")
+        : ""}`;
+  }
+  const scroll = state.surface === "verbs" ? " data-scroll" : "";
+  return `<div class="b">${rail()}<div class="b-stage">${head}<div class="b-body"${scroll}>${body}</div>${bActions()}</div></div>`;
+}
+
+function renderC() {
+  if (state.surface === "verbs") {
+    const cells = VERBS.map((v, i) => {
+      const on = state.marked.has(i);
+      return `<button type="button" class="c-cell${on ? " on" : ""}" data-act="toggle" data-arg="${i}" aria-pressed="${on}">
+        <b>${esc(v.ru)}</b><small>${esc(v.en)}</small>
+      </button>`;
+    }).join("");
+    return `<div class="c-verbs">
+      <div class="c-verbbar">
+        <button type="button" data-act="home">Главная</button>
+        ${state.returnTo ? `<button type="button" data-act="back">К ходу</button>` : "<span></span>"}
+      </div>
+      <div class="c-grid" data-scroll>${cells}</div>
+    </div>`;
+  }
+  if (state.surface === "home") {
+    return `<div class="c">
+      <div class="c-top"><button type="button" class="c-homehalf" data-act="learn">Учим</button></div>
+      <div class="c-seam"><button type="button" data-act="verbs">Глаголы</button></div>
+      <div class="c-bot"><button type="button" class="c-homehalf" data-act="check">Проверка</button></div>
+    </div>`;
+  }
+  const v = verb();
+  const corners = `<div class="c-corner">
+    <button type="button" data-act="home">Главная</button>
+    <button type="button" data-act="verbs">Глаголы</button>
+  </div>`;
+  let top = "";
+  let seam = "";
+  let bot = "";
+  if (state.phase === "blocked") {
+    top = `${corners}<p class="c-tag">${esc(v.en)}</p>`;
+    seam = `<div class="c-seam"><button type="button" data-act="again">Ещё раз</button></div>`;
+    bot = `<p class="c-big">${esc(REASONS[state.reason])}</p>`;
+  } else if (state.phase === "verdict") {
+    const title = state.verdict === "match" ? "Совпало" : "Не совпало";
+    top = `${corners}<p class="c-tag">Три формы</p>${v.forms.map((f) => `<p class="c-sub">${esc(f)}</p>`).join("")}`;
+    seam = `<div class="c-seam"><strong>${title}</strong></div>`;
+    bot = `<p class="c-tag">Сказано</p><p class="c-big">${esc(heardText())}</p>
+      <div class="c-corner">
+        <button type="button" data-act="again">Ещё раз</button>
+        <button type="button" data-act="next">Дальше</button>
+      </div>`;
+  } else if (state.surface === "check") {
+    top = `${corners}<p class="c-tag">${state.playing ? "Говорит" : "Ход ждёт"}</p><p class="c-big">${esc(v.en)}</p>`;
+    seam = showDone()
+      ? `<div class="c-seam"><button type="button" data-act="done">Готово</button></div>`
+      : `<div class="c-seam"><button type="button" data-act="again">Ещё раз</button></div>`;
+    bot = showNext()
+      ? `<div class="c-corner"><button type="button" data-act="again">Ещё раз</button><button type="button" data-act="next">Дальше</button></div>`
+      : `<p class="c-tag">Сказано</p>`;
+  } else {
+    const forms = state.phase === "speaking"
+      ? v.forms.map((f) => `<p class="c-sub">${esc(f)}</p>`).join("")
+      : "";
+    top = `${corners}<p class="c-tag">${state.playing ? "Говорит" : "Ход ждёт"}</p><p class="c-big">${esc(v.ru)}</p>${forms}`;
+    seam = showDone()
+      ? `<div class="c-seam"><button type="button" data-act="done">Готово</button></div>`
+      : `<div class="c-seam"><button type="button" data-act="again">Ещё раз</button></div>`;
+    bot = showNext()
+      ? `<div class="c-corner"><button type="button" data-act="again">Ещё раз</button><button type="button" data-act="next">Дальше</button></div>`
+      : `<p class="c-tag">Сказано</p>`;
+  }
+  return `<div class="c"><div class="c-top">${top}</div>${seam}<div class="c-bot">${bot}</div></div>`;
+}
+
+function stateLine() {
+  const v = verb();
+  const where = state.surface === "home" ? "Главная" : state.surface === "verbs" ? "Глаголы" : modeName(state.surface);
+  let phase = "";
+  if (inMode()) {
+    if (state.phase === "blocked") phase = REASONS[state.reason];
+    else if (state.phase === "verdict") phase = state.verdict === "match" ? "Совпало" : "Не совпало";
+    else if (state.phase === "listening") phase = "Слушаем";
+    else phase = state.playing ? "Говорит" : "Ход ждёт";
+  } else if (state.paused) phase = `ход ждёт, ${modeName(state.returnTo)}`;
+  return [where, phase, v.en, `отмечено ${state.marked.size}`].filter(Boolean).join(" · ");
+}
+
+function render() {
+  const scroller = document.querySelector("[data-scroll]");
+  const y = scroller ? scroller.scrollTop : 0;
+  const v = variant();
+  const html = v === "B" ? renderB() : v === "C" ? renderC() : renderA();
+  document.getElementById("screen").innerHTML = html;
+  const next = document.querySelector("[data-scroll]");
+  if (next) next.scrollTop = y;
+  document.getElementById("label").textContent = LABELS[v];
+  document.getElementById("state").textContent = stateLine();
+}
+
+document.getElementById("screen").addEventListener("click", (e) => {
+  const el = e.target.closest("[data-act]");
+  if (!el) return;
+  act(el.dataset.act, el.dataset.arg);
+});
+document.getElementById("jumps").addEventListener("click", (e) => {
+  const el = e.target.closest("[data-jump]");
+  if (!el) return;
+  jump(el.dataset.jump);
+  render();
+});
+document.getElementById("prev").addEventListener("click", () => cycle(-1));
+document.getElementById("next-variant").addEventListener("click", () => cycle(1));
+window.addEventListener("keydown", (e) => {
+  const t = e.target;
+  if (t && (t.matches("input, textarea") || t.isContentEditable)) return;
+  if (e.key === "ArrowLeft") { e.preventDefault(); cycle(-1); }
+  if (e.key === "ArrowRight") { e.preventDefault(); cycle(1); }
+});
+render();
+</script>
+</body>
+</html>
