@@ -138,6 +138,7 @@ private fun HomeColumn(show: Show.Home, onStrip: (String) -> Unit) {
 @Composable
 private fun LearnColumn(show: Show.Learn, onControl: (Control) -> Unit) {
     Column(Modifier.fillMaxSize()) {
+        TopBar(show.nav, onControl)
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -196,6 +197,7 @@ private fun LearnColumn(show: Show.Learn, onControl: (Control) -> Unit) {
 @Composable
 private fun CheckColumn(show: Show.Check, onControl: (Control) -> Unit) {
     Column(Modifier.fillMaxSize()) {
+        TopBar(show.nav, onControl)
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -242,6 +244,29 @@ private fun CheckColumn(show: Show.Check, onControl: (Control) -> Unit) {
 }
 
 @Composable
+private fun TopBar(controls: List<Control>, onControl: (Control) -> Unit) {
+    Row(
+        modifier = Modifier.padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        controls.forEach { control ->
+            OutlinedButton(
+                onClick = { onControl(control) },
+                shape = RectangleShape,
+                contentPadding = PaddingValues(12.dp),
+                border = BorderStroke(1.dp, Ink),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = Color.Transparent,
+                    contentColor = Ink,
+                ),
+            ) {
+                Text(text = control.label, fontFamily = FontFamily.Serif, fontSize = 16.sp)
+            }
+        }
+    }
+}
+
+@Composable
 private fun Controls(controls: List<Control>, onControl: (Control) -> Unit) {
     Column(
         modifier = Modifier.padding(12.dp),
@@ -260,25 +285,7 @@ private fun VerbsColumn(
     onToggle: (Verb) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            show.controls.forEach { control ->
-                OutlinedButton(
-                    onClick = { onControl(control) },
-                    shape = RectangleShape,
-                    contentPadding = PaddingValues(12.dp),
-                    border = BorderStroke(1.dp, Ink),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = Color.Transparent,
-                        contentColor = Ink,
-                    ),
-                ) {
-                    Text(text = control.label, fontFamily = FontFamily.Serif, fontSize = 16.sp)
-                }
-            }
-        }
+        TopBar(show.controls, onControl)
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -350,6 +357,8 @@ private fun Control.input(): Input = when (this) {
     Control.Again -> Input.Again
     Control.Next -> Input.Next
     Control.Home -> Input.Home
+    Control.Verbs -> Input.EnterVerbs
+    Control.Back -> Input.Back
 }
 
 @Composable
