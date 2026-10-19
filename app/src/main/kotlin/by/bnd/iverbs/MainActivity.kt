@@ -8,6 +8,8 @@ import by.bnd.iverbs.turn.beginnerVerbs
 import by.bnd.iverbs.turn.uniformDraw
 
 class MainActivity : ComponentActivity() {
+    private lateinit var speech: SpeechPort
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val saved = SavedList(this)
@@ -17,9 +19,14 @@ class MainActivity : ComponentActivity() {
             list = list,
             draw = uniformDraw(),
         )
-        val speech = SpeechPort()
+        speech = SpeechPort(this)
         setContent {
             IverbsScreen(turn = turn, speech = speech, onList = saved::write)
         }
+    }
+
+    override fun onDestroy() {
+        if (::speech.isInitialized) speech.close()
+        super.onDestroy()
     }
 }

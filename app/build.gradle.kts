@@ -17,11 +17,23 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildFeatures {
         compose = true
     }
+}
+
+tasks.register<Exec>("fetchSpeechAssets") {
+    workingDir = rootProject.projectDir
+    commandLine("bash", "app/fetch-speech-assets.sh")
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("fetchSpeechAssets")
 }
 
 dependencies {

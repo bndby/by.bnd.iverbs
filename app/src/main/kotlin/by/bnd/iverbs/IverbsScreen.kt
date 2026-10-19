@@ -96,7 +96,10 @@ fun IverbsScreen(turn: Turn, speech: SpeechPort, onList: (List<Verb>) -> Unit) {
             onList(verbs.rows.filter { it.marked }.map { it.verb })
         }
     }
-    SideEffect { report.value = act }
+    SideEffect {
+        report.value = act
+        speech.onOutcome = act
+    }
     MaterialTheme(
         colorScheme = lightColorScheme(
             primary = Ink,
