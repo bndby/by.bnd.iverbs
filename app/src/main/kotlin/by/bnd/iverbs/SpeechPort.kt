@@ -33,6 +33,12 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
 
+data class SpeechAbilities(
+    val russianSpeech: Boolean,
+    val englishSpeech: Boolean,
+    val englishRecognition: Boolean,
+)
+
 /**
  * Sherpa-ONNX на устройстве. Одна команда «говорить» — одна фраза:
  * части по порядку на уже открытом голосе, короткая пауза между ними.
@@ -52,11 +58,12 @@ class SpeechPort(context: android.content.Context) {
     private var recognizer: OfflineRecognizer? = null
     private var vad: Vad? = null
     private var track: AudioTrack? = null
-    private var recorder: AudioRecord? = null
     private var framesWritten = 0
 
     @Volatile private var stopped = true
     @Volatile private var closed = false
+    @Volatile private var finishRequested = false
+    @Volatile private var recorder: AudioRecord? = null
 
     fun perform(command: Command?) {
         if (closed) return
@@ -65,8 +72,37 @@ class SpeechPort(context: android.content.Context) {
             is Command.Speak -> begin { ticket -> speak(command.phrase, ticket) }
             Command.Listen -> begin { ticket -> listen(ticket) }
             Command.Stop -> {
+                finishRequested = false
                 haltAudio()
                 epoch.incrementAndGet()
+            }
+        }
+    }
+
+    /** «Готово»: остановить запись этого слушания, распознать её и отдать текст. */
+    fun finishUtterance() {
+        if (closed) return
+        finishRequested = true
+        stopRecorder()
+        speech.post {
+            if (!finishRequested || closed) return@post
+            finishRequested = false
+            report(Input.ListeningEnded(""))
+        }
+    }
+
+    /** Заново открыть русскую речь, английскую речь и английское распознавание. */
+    fun probe(onResult: (SpeechAbilities) -> Unit) {
+        if (closed) return
+        speech.post {
+            if (closed) return@post
+            val opened = SpeechAbilities(
+                russianSpeech = openRussian() != null,
+                englishSpeech = openEnglish() != null,
+                englishRecognition = openHearing(),
+            )
+            main.post {
+                if (!closed) onResult(opened)
             }
         }
     }
@@ -83,6 +119,7 @@ class SpeechPort(context: android.content.Context) {
     }
 
     private fun begin(block: (Int) -> Unit) {
+        finishRequested = false
         haltAudio()
         stopped = false
         val ticket = epoch.incrementAndGet()
@@ -193,13 +230,25 @@ class SpeechPort(context: android.content.Context) {
     }
 
     private fun listen(ticket: Int) {
+        if (!current(ticket)) return
         if (!openHearing()) {
+            finishRequested = false
             if (current(ticket)) report(Input.ModelDidNotOpen(Model.EnglishRecognition))
             return
         }
-        val hearing = vad ?: return
-        val reader = recognizer ?: return
+        val hearing = vad
+        val reader = recognizer
+        if (hearing == null || reader == null) {
+            finishRequested = false
+            if (current(ticket)) report(Input.ModelDidNotOpen(Model.EnglishRecognition))
+            return
+        }
         hearing.reset()
+        if (finishRequested) {
+            if (current(ticket)) report(Input.ListeningEnded(""))
+            finishRequested = false
+            return
+        }
         val mine = try {
             openRecorder()
         } catch (error: Throwable) {
@@ -207,11 +256,14 @@ class SpeechPort(context: android.content.Context) {
             null
         }
         if (mine == null) {
+            finishRequested = false
             if (current(ticket)) report(Input.RecognitionDidNotStart)
             return
         }
         recorder = mine
         var started = false
+        var broke = false
+        val captured = ArrayList<FloatArray>()
         try {
             mine.startRecording()
             started = mine.recordingState == AudioRecord.RECORDSTATE_RECORDING
@@ -220,29 +272,50 @@ class SpeechPort(context: android.content.Context) {
                 return
             }
             val buffer = ShortArray(hearing.config.sileroVadModelConfig.windowSize)
-            while (current(ticket)) {
+            val preRoll = FloatArray(HEARING_RATE / 2)
+            var preRollCount = 0
+            var preRollAt = 0
+            var capturing = false
+            while (current(ticket) && !finishRequested) {
                 val read = mine.read(buffer, 0, buffer.size)
                 if (!current(ticket)) break
                 if (read < 0) {
-                    report(Input.ListeningBroke)
+                    if (finishRequested) break
+                    if (current(ticket)) report(Input.ListeningBroke)
+                    broke = true
                     break
                 }
                 if (read == 0) continue
-                val samples = FloatArray(read) { buffer[it] / 32768.0f }
-                hearing.acceptWaveform(samples)
-                if (!hearing.empty()) {
-                    val segment = hearing.front()
-                    val text = transcribe(reader, segment.samples)
-                    hearing.pop()
-                    if (current(ticket)) report(Input.ListeningEnded(text))
-                    break
+                val heard = FloatArray(read) { buffer[it] / 32768.0f }
+                hearing.acceptWaveform(heard)
+                val ended = !hearing.empty() && !hearing.isSpeechDetected()
+                if (hearing.isSpeechDetected() || capturing || ended) {
+                    if (!capturing) {
+                        if (preRollCount > 0) captured.add(copyPreRoll(preRoll, preRollCount, preRollAt))
+                        capturing = true
+                    }
+                    captured.add(heard)
+                } else {
+                    for (sample in heard) {
+                        preRoll[preRollAt] = sample
+                        preRollAt = (preRollAt + 1) % preRoll.size
+                        if (preRollCount < preRoll.size) preRollCount++
+                    }
                 }
+                if (ended) break
+            }
+            if (!broke && current(ticket)) {
+                stopRecorder()
+                val samples = join(captured)
+                val text = if (samples.isEmpty()) "" else transcribe(reader, samples)
+                if (current(ticket)) report(Input.ListeningEnded(text))
             }
         } catch (error: Throwable) {
             Log.e(TAG, "Слушание оборвалось", error)
             if (started && current(ticket)) report(Input.ListeningBroke)
             else if (current(ticket)) report(Input.RecognitionDidNotStart)
         } finally {
+            finishRequested = false
             if (recorder === mine) recorder = null
             try {
                 if (mine.recordingState == AudioRecord.RECORDSTATE_RECORDING) mine.stop()
@@ -250,6 +323,27 @@ class SpeechPort(context: android.content.Context) {
             }
             mine.release()
         }
+    }
+
+    private fun copyPreRoll(preRoll: FloatArray, count: Int, at: Int): FloatArray {
+        val out = FloatArray(count)
+        val start = if (count == preRoll.size) at else 0
+        for (index in out.indices) {
+            out[index] = preRoll[(start + index) % preRoll.size]
+        }
+        return out
+    }
+
+    private fun join(chunks: List<FloatArray>): FloatArray {
+        val count = chunks.sumOf { it.size }
+        if (count == 0) return FloatArray(0)
+        val samples = FloatArray(count)
+        var offset = 0
+        for (chunk in chunks) {
+            chunk.copyInto(samples, offset)
+            offset += chunk.size
+        }
+        return samples
     }
 
     private fun transcribe(reader: OfflineRecognizer, samples: FloatArray): String {
@@ -326,8 +420,9 @@ class SpeechPort(context: android.content.Context) {
                         sileroVadModelConfig = SileroVadModelConfig(
                             model = SILERO,
                             threshold = 0.5f,
-                            minSilenceDuration = 0.25f,
+                            minSilenceDuration = UTTERANCE_SILENCE_SECONDS,
                             minSpeechDuration = 0.25f,
+                            maxSpeechDuration = MAX_UTTERANCE_SECONDS,
                             windowSize = 512,
                         ),
                         sampleRate = HEARING_RATE,
@@ -413,6 +508,15 @@ class SpeechPort(context: android.content.Context) {
         return dest
     }
 
+    private fun stopRecorder() {
+        recorder?.let { recording ->
+            try {
+                if (recording.recordingState == AudioRecord.RECORDSTATE_RECORDING) recording.stop()
+            } catch (_: IllegalStateException) {
+            }
+        }
+    }
+
     private fun haltAudio() {
         stopped = true
         track?.let { playing ->
@@ -422,12 +526,7 @@ class SpeechPort(context: android.content.Context) {
             } catch (_: IllegalStateException) {
             }
         }
-        recorder?.let { recording ->
-            try {
-                if (recording.recordingState == AudioRecord.RECORDSTATE_RECORDING) recording.stop()
-            } catch (_: IllegalStateException) {
-            }
-        }
+        stopRecorder()
     }
 
     private fun releaseEngines() {
@@ -454,6 +553,8 @@ class SpeechPort(context: android.content.Context) {
 
     private companion object {
         const val TAG = "iverbs"
+        const val UTTERANCE_SILENCE_SECONDS = 1.2f
+        const val MAX_UTTERANCE_SECONDS = 30f
         const val PAUSE_SECONDS = 0.4f
         const val DEFAULT_RATE = 22050
         const val HEARING_RATE = 16000

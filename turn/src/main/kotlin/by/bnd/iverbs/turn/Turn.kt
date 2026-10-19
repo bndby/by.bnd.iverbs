@@ -46,6 +46,23 @@ enum class Control(val label: String) {
     Back("К ходу"),
 }
 
+enum class Strip(val label: String) {
+    Learn("Учим"),
+    Check("Проверка"),
+    Verbs("Глаголы"),
+    ;
+
+    fun input(): Input = when (this) {
+        Learn -> Input.EnterLearn
+        Check -> Input.EnterCheck
+        Verbs -> Input.EnterVerbs
+    }
+
+    companion object {
+        fun labeled(label: String): Strip = entries.first { it.label == label }
+    }
+}
+
 data class VerbRow(
     val verb: Verb,
     val marked: Boolean,
@@ -458,7 +475,7 @@ private fun Phase.verbOrNull(): Verb? = when (this) {
 private val turnNav = listOf(Control.Home, Control.Verbs)
 
 private fun Phase.toShow(set: List<Verb>, list: List<Verb>): Show = when (this) {
-    Phase.Home -> Show.Home(strips = listOf("Учим", "Проверка", "Глаголы"))
+    Phase.Home -> Show.Home(strips = Strip.entries.map { it.label })
     is Phase.Verbs -> Show.Verbs(
         rows = set.map { verb -> VerbRow(verb = verb, marked = verb in list) },
         controls = if (covered == null) {

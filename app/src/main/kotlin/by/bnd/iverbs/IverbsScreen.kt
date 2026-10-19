@@ -53,8 +53,10 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import by.bnd.iverbs.turn.Command
 import by.bnd.iverbs.turn.Control
+import by.bnd.iverbs.turn.Forms
 import by.bnd.iverbs.turn.Input
 import by.bnd.iverbs.turn.Show
+import by.bnd.iverbs.turn.Strip
 import by.bnd.iverbs.turn.Turn
 import by.bnd.iverbs.turn.Verb
 import by.bnd.iverbs.turn.VerbRow
@@ -63,11 +65,13 @@ import java.util.Locale
 private val Paper = Color(0xFFF3EFE6)
 private val Ink = Color(0xFF1C1915)
 private const val Microphone = Manifest.permission.RECORD_AUDIO
+private const val ModelClosed = "Модель не открылась"
 
 @Composable
 fun IverbsScreen(turn: Turn, speech: SpeechPort, onList: (List<Verb>) -> Unit) {
     val context = LocalContext.current
     val report = remember { mutableStateOf<(Input) -> Unit>({}) }
+    val recheck = remember { mutableStateOf<(Boolean) -> Unit>({}) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -76,8 +80,7 @@ fun IverbsScreen(turn: Turn, speech: SpeechPort, onList: (List<Verb>) -> Unit) {
     val settingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
-        val granted = context.checkSelfPermission(Microphone) == PackageManager.PERMISSION_GRANTED
-        reportPermission(report.value, context, granted)
+        recheck.value(false)
     }
     var reaction by remember {
         val missing = context.checkSelfPermission(Microphone) != PackageManager.PERMISSION_GRANTED
@@ -95,10 +98,35 @@ fun IverbsScreen(turn: Turn, speech: SpeechPort, onList: (List<Verb>) -> Unit) {
         if (verbs != null) {
             onList(verbs.rows.filter { it.marked }.map { it.verb })
         }
+        if (input == Input.Again && next.command == null && next.show.modelClosed()) {
+            recheck.value(true)
+        }
+    }
+    val press: (Control) -> Unit = { control ->
+        when (control) {
+            Control.Ready -> speech.finishUtterance()
+            Control.Again -> if (reaction.show.modelClosed()) recheck.value(true) else act(Input.Again)
+            else -> act(control.input())
+        }
     }
     SideEffect {
         report.value = act
         speech.onOutcome = act
+        recheck.value = { thenAgain ->
+            speech.probe { opened ->
+                val granted = context.checkSelfPermission(Microphone) == PackageManager.PERMISSION_GRANTED
+                act(
+                    Input.AbilitiesChecked(
+                        russianSpeech = opened.russianSpeech,
+                        englishSpeech = opened.englishSpeech,
+                        englishRecognition = opened.englishRecognition,
+                        microphone = granted,
+                        permissionPrompt = promptWillShow(context, granted),
+                    ),
+                )
+                if (thenAgain && reaction.show.blockCleared()) act(Input.Again)
+            }
+        }
     }
     MaterialTheme(
         colorScheme = lightColorScheme(
@@ -118,19 +146,15 @@ fun IverbsScreen(turn: Turn, speech: SpeechPort, onList: (List<Verb>) -> Unit) {
         ) {
             when (val show = reaction.show) {
                 is Show.Home -> HomeColumn(show) { label ->
-                    when (label) {
-                        "Учим" -> act(Input.EnterLearn)
-                        "Проверка" -> act(Input.EnterCheck)
-                        "Глаголы" -> act(Input.EnterVerbs)
-                    }
+                    act(Strip.labeled(label).input())
                 }
                 is Show.Verbs -> VerbsColumn(
                     show,
-                    onControl = { control -> act(control.input()) },
+                    onControl = press,
                     onToggle = { verb -> act(Input.Toggle(verb)) },
                 )
-                is Show.Learn -> LearnColumn(show) { control -> act(control.input()) }
-                is Show.Check -> CheckColumn(show) { control -> act(control.input()) }
+                is Show.Learn -> LearnColumn(show, press)
+                is Show.Check -> CheckColumn(show, press)
             }
         }
     }
@@ -175,120 +199,102 @@ private fun HomeColumn(show: Show.Home, onStrip: (String) -> Unit) {
 }
 
 @Composable
-private fun LearnColumn(show: Show.Learn, onControl: (Control) -> Unit) {
+private fun ModeColumn(
+    nav: List<Control>,
+    controls: List<Control>,
+    onControl: (Control) -> Unit,
+    body: @Composable () -> Unit,
+) {
     Column(Modifier.fillMaxSize()) {
-        TopBar(show.nav, onControl)
+        TopBar(nav, onControl)
         Column(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
                 .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 16.dp),
         ) {
-            val reason = show.reason
-            if (reason != null) {
-                BlockedText(infinitive = show.kicker.orEmpty(), reason = reason)
-            } else {
-                val kicker = show.kicker
-                if (kicker != null) {
-                    Text(
-                        text = kicker,
-                        fontFamily = FontFamily.SansSerif,
-                        fontSize = 13.sp,
-                        letterSpacing = 0.08.em,
-                        color = Ink,
-                        modifier = Modifier.padding(vertical = 8.dp),
-                    )
-                }
+            body()
+        }
+        Controls(controls, onControl)
+    }
+}
+
+@Composable
+private fun AnswerTail(forms: Forms?, recognised: String?) {
+    if (forms != null) {
+        Column(Modifier.padding(top = 12.dp)) {
+            listOf(forms.infinitive, forms.pastSimple, forms.pastParticiple).forEach { form ->
                 Text(
-                    text = show.headline,
+                    text = form,
                     fontFamily = FontFamily.Serif,
-                    fontSize = 40.sp,
-                    lineHeight = 1.05.em,
+                    fontSize = 32.sp,
+                    lineHeight = 1.15.em,
                     color = Ink,
-                    modifier = Modifier.padding(bottom = 16.dp),
                 )
-                val forms = show.forms
-                if (forms != null) {
-                    Column(Modifier.padding(top = 12.dp)) {
-                        listOf(forms.infinitive, forms.pastSimple, forms.pastParticiple).forEach { form ->
-                            Text(
-                                text = form,
-                                fontFamily = FontFamily.Serif,
-                                fontSize = 32.sp,
-                                lineHeight = 1.15.em,
-                                color = Ink,
-                            )
-                        }
-                    }
-                }
-                val recognised = show.recognised
-                if (recognised != null) {
-                    Text(
-                        text = recognised,
-                        fontFamily = FontFamily.SansSerif,
-                        fontSize = 18.sp,
-                        color = Ink,
-                        minLines = 1,
-                        modifier = Modifier.padding(top = 20.dp),
-                    )
-                }
             }
         }
-        Controls(show.controls, onControl)
+    }
+    if (recognised != null) {
+        Text(
+            text = recognised,
+            fontFamily = FontFamily.SansSerif,
+            fontSize = 18.sp,
+            color = Ink,
+            minLines = 1,
+            modifier = Modifier.padding(top = 20.dp),
+        )
+    }
+}
+
+@Composable
+private fun LearnColumn(show: Show.Learn, onControl: (Control) -> Unit) {
+    ModeColumn(show.nav, show.controls, onControl) {
+        val reason = show.reason
+        if (reason != null) {
+            BlockedText(infinitive = show.kicker.orEmpty(), reason = reason)
+        } else {
+            val kicker = show.kicker
+            if (kicker != null) {
+                Text(
+                    text = kicker,
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 13.sp,
+                    letterSpacing = 0.08.em,
+                    color = Ink,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+            }
+            Text(
+                text = show.headline,
+                fontFamily = FontFamily.Serif,
+                fontSize = 40.sp,
+                lineHeight = 1.05.em,
+                color = Ink,
+                modifier = Modifier.padding(bottom = 16.dp),
+            )
+            AnswerTail(show.forms, show.recognised)
+        }
     }
 }
 
 @Composable
 private fun CheckColumn(show: Show.Check, onControl: (Control) -> Unit) {
-    Column(Modifier.fillMaxSize()) {
-        TopBar(show.nav, onControl)
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 16.dp),
-        ) {
-            val reason = show.reason
-            if (reason != null) {
-                BlockedText(infinitive = show.headline, reason = reason)
-            } else {
-                val beforeVerdict = show.forms == null && show.recognised == null
-                Text(
-                    text = show.headline,
-                    fontFamily = FontFamily.Serif,
-                    fontSize = if (beforeVerdict) 36.sp else 40.sp,
-                    lineHeight = 1.05.em,
-                    color = Ink,
-                    modifier = Modifier.padding(bottom = if (beforeVerdict) 0.dp else 16.dp),
-                )
-                val forms = show.forms
-                if (forms != null) {
-                    Column(Modifier.padding(top = 12.dp)) {
-                        listOf(forms.infinitive, forms.pastSimple, forms.pastParticiple).forEach { form ->
-                            Text(
-                                text = form,
-                                fontFamily = FontFamily.Serif,
-                                fontSize = 32.sp,
-                                lineHeight = 1.15.em,
-                                color = Ink,
-                            )
-                        }
-                    }
-                }
-                val recognised = show.recognised
-                if (recognised != null) {
-                    Text(
-                        text = recognised,
-                        fontFamily = FontFamily.SansSerif,
-                        fontSize = 18.sp,
-                        color = Ink,
-                        minLines = 1,
-                        modifier = Modifier.padding(top = 20.dp),
-                    )
-                }
-            }
+    ModeColumn(show.nav, show.controls, onControl) {
+        val reason = show.reason
+        if (reason != null) {
+            BlockedText(infinitive = show.headline, reason = reason)
+        } else {
+            val beforeVerdict = show.forms == null && show.recognised == null
+            Text(
+                text = show.headline,
+                fontFamily = FontFamily.Serif,
+                fontSize = if (beforeVerdict) 36.sp else 40.sp,
+                lineHeight = 1.05.em,
+                color = Ink,
+                modifier = Modifier.padding(bottom = if (beforeVerdict) 0.dp else 16.dp),
+            )
+            AnswerTail(show.forms, show.recognised)
         }
-        Controls(show.controls, onControl)
     }
 }
 
@@ -465,6 +471,24 @@ private fun BlockedText(infinitive: String, reason: String) {
         color = Ink,
         modifier = Modifier.padding(vertical = 12.dp),
     )
+}
+
+private fun Show.modelClosed(): Boolean = when (this) {
+    is Show.Learn -> reason == ModelClosed
+    is Show.Check -> reason == ModelClosed
+    else -> false
+}
+
+private fun Show.blockCleared(): Boolean = when (this) {
+    is Show.Learn -> reason == null
+    is Show.Check -> reason == null
+    else -> false
+}
+
+private fun promptWillShow(context: Context, granted: Boolean): Boolean {
+    if (granted) return true
+    val activity = context.findActivity() ?: return true
+    return activity.shouldShowRequestPermissionRationale(Microphone)
 }
 
 private fun reportPermission(report: (Input) -> Unit, context: Context, granted: Boolean) {
