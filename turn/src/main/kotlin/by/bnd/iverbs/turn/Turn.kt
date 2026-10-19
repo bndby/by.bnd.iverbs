@@ -37,10 +37,21 @@ enum class Control(val label: String) {
     Ready("Готово"),
     Again("Ещё раз"),
     Next("Дальше"),
+    Home("Главная"),
 }
+
+data class VerbRow(
+    val verb: Verb,
+    val marked: Boolean,
+)
 
 sealed interface Show {
     data class Home(val strips: List<String>) : Show
+
+    data class Verbs(
+        val rows: List<VerbRow>,
+        val controls: List<Control>,
+    ) : Show
 
     data class Learn(
         val kicker: String?,
@@ -61,6 +72,9 @@ sealed interface Show {
 sealed interface Input {
     data object EnterLearn : Input
     data object EnterCheck : Input
+    data object EnterVerbs : Input
+    data object Home : Input
+    data class Toggle(val verb: Verb) : Input
     data object PhraseEnded : Input
     data class ListeningEnded(val text: String) : Input
     data object Ready : Input
@@ -75,7 +89,7 @@ data class Reaction(
 
 class Turn(
     private val set: List<Verb>,
-    private val list: List<Verb>,
+    private var list: List<Verb>,
     private val draw: Draw,
 ) {
     private var phase: Phase = Phase.Home
@@ -84,23 +98,52 @@ class Turn(
         require(list.all { verb -> set.contains(verb) })
     }
 
-    fun shown(): Reaction = Reaction(show = phase.toShow(), command = null)
+    fun shown(): Reaction = Reaction(show = phase.toShow(set, list), command = null)
 
     fun on(input: Input): Reaction {
         val command = when (input) {
             Input.EnterLearn -> enter(Mode.Learn)
             Input.EnterCheck -> enter(Mode.Check)
+            Input.EnterVerbs -> enterVerbs()
+            Input.Home -> home()
+            is Input.Toggle -> toggle(input.verb)
             Input.PhraseEnded -> phraseEnded()
             is Input.ListeningEnded -> listeningEnded(input.text)
             Input.Ready -> ready()
             Input.Again -> again()
             Input.Next -> next()
         }
-        return Reaction(show = phase.toShow(), command = command)
+        return Reaction(show = phase.toShow(set, list), command = command)
+    }
+
+    private fun enterVerbs(): Command? {
+        if (phase !is Phase.Home) return null
+        phase = Phase.Verbs
+        return null
+    }
+
+    private fun home(): Command? {
+        if (phase !is Phase.Verbs) return null
+        phase = Phase.Home
+        return null
+    }
+
+    private fun toggle(verb: Verb): Command? {
+        if (verb !in set) return null
+        list = if (verb in list) {
+            list.filter { it != verb }
+        } else {
+            set.filter { it == verb || it in list }
+        }
+        return null
     }
 
     private fun enter(mode: Mode): Command? {
         if (phase !is Phase.Home) return null
+        if (list.isEmpty()) {
+            phase = Phase.Verbs
+            return null
+        }
         val drawn = draw.next(list)
         phase = Phase.Speaking(drawn, mode)
         return Command.Speak(drawn.phrase(mode))
@@ -144,6 +187,11 @@ class Turn(
     private fun next(): Command? {
         val mode = phase.modeOrNull() ?: return null
         if (phase !is Phase.Listening && phase !is Phase.Verdict) return null
+        if (list.isEmpty()) {
+            val stop = if (phase is Phase.Listening) Command.Stop else null
+            phase = Phase.Verbs
+            return stop
+        }
         val drawn = draw.next(list)
         phase = Phase.Speaking(drawn, mode)
         return Command.Speak(drawn.phrase(mode))
@@ -154,6 +202,7 @@ private enum class Mode { Learn, Check }
 
 private sealed interface Phase {
     data object Home : Phase
+    data object Verbs : Phase
     data class Speaking(val verb: Verb, val mode: Mode) : Phase
     data class Listening(val verb: Verb, val mode: Mode, val recognised: String = "") : Phase
     data class Verdict(
@@ -165,21 +214,25 @@ private sealed interface Phase {
 }
 
 private fun Phase.modeOrNull(): Mode? = when (this) {
-    Phase.Home -> null
+    Phase.Home, Phase.Verbs -> null
     is Phase.Speaking -> mode
     is Phase.Listening -> mode
     is Phase.Verdict -> mode
 }
 
 private fun Phase.verbOrNull(): Verb? = when (this) {
-    Phase.Home -> null
+    Phase.Home, Phase.Verbs -> null
     is Phase.Speaking -> verb
     is Phase.Listening -> verb
     is Phase.Verdict -> verb
 }
 
-private fun Phase.toShow(): Show = when (this) {
-    Phase.Home -> Show.Home(strips = listOf("Учим", "Проверка"))
+private fun Phase.toShow(set: List<Verb>, list: List<Verb>): Show = when (this) {
+    Phase.Home -> Show.Home(strips = listOf("Учим", "Проверка", "Глаголы"))
+    Phase.Verbs -> Show.Verbs(
+        rows = set.map { verb -> VerbRow(verb = verb, marked = verb in list) },
+        controls = listOf(Control.Home),
+    )
     is Phase.Speaking -> when (mode) {
         Mode.Learn -> Show.Learn(
             kicker = "Говорит",

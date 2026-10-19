@@ -5,13 +5,244 @@ import org.junit.Test
 
 class TurnTest {
     @Test
-    fun `новый ход открывает главную с полосами Учим и Проверка`() {
+    fun `новый ход открывает главную с полосами Учим, Проверка и Глаголы`() {
         val turn = turnOf(draw = PredeterminedDraw(listOf(go)))
 
         val reaction = turn.shown()
 
-        assertEquals(Show.Home(strips = listOf("Учим", "Проверка")), reaction.show)
+        assertEquals(Show.Home(strips = listOf("Учим", "Проверка", "Глаголы")), reaction.show)
         assertEquals(null, reaction.command)
+    }
+
+    @Test
+    fun `Глаголы с главной показывают набор по порядку и не начинают ход`() {
+        val eat = Verb("есть", Forms("eat", "ate", "eaten"))
+        val be = Verb("быть", Forms("be", "was", "been"))
+        val turn = turnOf(
+            set = listOf(go, eat, be),
+            list = listOf(eat),
+            draw = Draw { error("ход не начинается") },
+        )
+
+        val reaction = turn.on(Input.EnterVerbs)
+        val verbs = reaction.show as Show.Verbs
+
+        assertEquals(
+            listOf(
+                VerbRow(verb = go, marked = false),
+                VerbRow(verb = eat, marked = true),
+                VerbRow(verb = be, marked = false),
+            ),
+            verbs.rows,
+        )
+        assertEquals(listOf(Control.Home), verbs.controls)
+        assertEquals(listOf("Главная"), verbs.controls.map { it.label })
+        assertEquals(null, reaction.command)
+        assertEquals(reaction.show, turn.shown().show)
+        assertEquals(null, turn.shown().command)
+    }
+
+    @Test
+    fun `снятие отметки убирает глагол из Учим и Проверки и оставляет его в наборе`() {
+        val eat = Verb("есть", Forms("eat", "ate", "eaten"))
+        val learn = turnOf(
+            set = listOf(go, eat),
+            list = listOf(go, eat),
+            draw = Draw { verbs -> verbs.single() },
+        )
+        learn.on(Input.EnterVerbs)
+
+        val page = learn.on(Input.Toggle(eat)).show as Show.Verbs
+        assertEquals(
+            listOf(
+                VerbRow(verb = go, marked = true),
+                VerbRow(verb = eat, marked = false),
+            ),
+            page.rows,
+        )
+        assertEquals("есть", page.rows[1].verb.meaning)
+        assertEquals(Forms("eat", "ate", "eaten"), page.rows[1].verb.forms)
+
+        val home = learn.on(Input.Home)
+        assertEquals(Show.Home(strips = listOf("Учим", "Проверка", "Глаголы")), home.show)
+        assertEquals(null, home.command)
+
+        val learned = learn.on(Input.EnterLearn)
+        assertEquals("идти", (learned.show as Show.Learn).headline)
+        assertEquals(Command.Speak(phrase("идти", Forms("go", "went", "gone"))), learned.command)
+
+        val check = turnOf(
+            set = listOf(go, eat),
+            list = listOf(go, eat),
+            draw = Draw { verbs -> verbs.single() },
+        )
+        check.on(Input.EnterVerbs)
+        check.on(Input.Toggle(eat))
+        check.on(Input.Home)
+        val checked = check.on(Input.EnterCheck)
+        assertEquals("go", (checked.show as Show.Check).headline)
+        assertEquals(Command.Speak(infinitivePhrase("go")), checked.command)
+    }
+
+    @Test
+    fun `повторная отметка возвращает глагол в Учим и в Проверку`() {
+        val eat = Verb("есть", Forms("eat", "ate", "eaten"))
+        val learn = turnOf(
+            set = listOf(go, eat),
+            list = listOf(go),
+            draw = Draw { verbs -> verbs.last() },
+        )
+        learn.on(Input.EnterVerbs)
+
+        val page = learn.on(Input.Toggle(eat)).show as Show.Verbs
+        assertEquals(
+            listOf(
+                VerbRow(verb = go, marked = true),
+                VerbRow(verb = eat, marked = true),
+            ),
+            page.rows,
+        )
+
+        learn.on(Input.Home)
+        val learned = learn.on(Input.EnterLearn)
+        assertEquals("есть", (learned.show as Show.Learn).headline)
+        assertEquals(Command.Speak(phrase("есть", Forms("eat", "ate", "eaten"))), learned.command)
+
+        val check = turnOf(
+            set = listOf(go, eat),
+            list = listOf(go),
+            draw = Draw { verbs -> verbs.last() },
+        )
+        check.on(Input.EnterVerbs)
+        check.on(Input.Toggle(eat))
+        check.on(Input.Home)
+        val checked = check.on(Input.EnterCheck)
+        assertEquals("eat", (checked.show as Show.Check).headline)
+        assertEquals(Command.Speak(infinitivePhrase("eat")), checked.command)
+    }
+
+    @Test
+    fun `чужой или исправленный глагол не меняет набор`() {
+        val foreign = Verb("петь", Forms("sing", "sang", "sung"))
+        val edited = Verb("идти", Forms("go", "goed", "gone"))
+        val turn = turnOf(
+            set = listOf(go),
+            list = listOf(go),
+            draw = Draw { error("ход не начинается") },
+        )
+        turn.on(Input.EnterVerbs)
+
+        val added = turn.on(Input.Toggle(foreign)).show as Show.Verbs
+        val changed = turn.on(Input.Toggle(edited)).show as Show.Verbs
+
+        assertEquals(listOf(VerbRow(verb = go, marked = true)), added.rows)
+        assertEquals(listOf(VerbRow(verb = go, marked = true)), changed.rows)
+    }
+
+    @Test
+    fun `пустой список с главной открывает страницу глаголов и не начинает ход`() {
+        val eat = Verb("есть", Forms("eat", "ate", "eaten"))
+        val rows = listOf(
+            VerbRow(verb = go, marked = false),
+            VerbRow(verb = eat, marked = false),
+        )
+        val learn = turnOf(
+            set = listOf(go, eat),
+            list = emptyList(),
+            draw = Draw { error("ход не начинается") },
+        )
+
+        val learned = learn.on(Input.EnterLearn)
+
+        assertEquals(Show.Verbs(rows = rows, controls = listOf(Control.Home)), learned.show)
+        assertEquals(null, learned.command)
+
+        val check = turnOf(
+            set = listOf(go, eat),
+            list = emptyList(),
+            draw = Draw { error("ход не начинается") },
+        )
+        val checked = check.on(Input.EnterCheck)
+        assertEquals(Show.Verbs(rows = rows, controls = listOf(Control.Home)), checked.show)
+        assertEquals(null, checked.command)
+    }
+
+    @Test
+    fun `Дальше при пустом списке открывает страницу глаголов и не начинает ход`() {
+        val eat = Verb("есть", Forms("eat", "ate", "eaten"))
+        val unmarked = listOf(
+            VerbRow(verb = go, marked = false),
+            VerbRow(verb = eat, marked = false),
+        )
+        val turn = turnOf(
+            set = listOf(go, eat),
+            list = listOf(go, eat),
+            draw = PredeterminedDraw(listOf(go, eat)),
+        )
+        turn.on(Input.EnterLearn)
+        turn.on(Input.PhraseEnded)
+
+        val cleared = turn.on(Input.Toggle(eat))
+        turn.on(Input.Toggle(go))
+        assertEquals("идти", (cleared.show as Show.Learn).headline)
+        assertEquals(null, cleared.command)
+
+        val fromListening = turn.on(Input.Next)
+        assertEquals(Show.Verbs(rows = unmarked, controls = listOf(Control.Home)), fromListening.show)
+        assertEquals(Command.Stop, fromListening.command)
+
+        val home = turn.on(Input.Home)
+        assertEquals(Show.Home(strips = listOf("Учим", "Проверка", "Глаголы")), home.show)
+        assertEquals(null, home.command)
+
+        val afterVerdict = turnOf(
+            set = listOf(go),
+            list = listOf(go),
+            draw = PredeterminedDraw(listOf(go)),
+        )
+        afterVerdict.on(Input.EnterCheck)
+        afterVerdict.on(Input.PhraseEnded)
+        afterVerdict.on(Input.ListeningEnded("мимо"))
+        afterVerdict.on(Input.Toggle(go))
+        val fromVerdict = afterVerdict.on(Input.Next)
+        assertEquals(
+            Show.Verbs(
+                rows = listOf(VerbRow(verb = go, marked = false)),
+                controls = listOf(Control.Home),
+            ),
+            fromVerdict.show,
+        )
+        assertEquals(null, fromVerdict.command)
+    }
+
+    @Test
+    fun `во время хода страница глаголов с Учим и Проверки не открывается`() {
+        val learn = turnOf(draw = PredeterminedDraw(listOf(go)))
+        learn.on(Input.EnterLearn)
+        learn.on(Input.PhraseEnded)
+
+        val duringLearn = learn.on(Input.EnterVerbs)
+
+        assertEquals(
+            Show.Learn(
+                kicker = null,
+                headline = "идти",
+                forms = null,
+                recognised = null,
+                controls = listOf(Control.Ready, Control.Again, Control.Next),
+            ),
+            duringLearn.show,
+        )
+        assertEquals(null, duringLearn.command)
+
+        val check = turnOf(draw = PredeterminedDraw(listOf(go)))
+        check.on(Input.EnterCheck)
+        check.on(Input.PhraseEnded)
+        check.on(Input.ListeningEnded("go went gone"))
+        val duringCheck = check.on(Input.EnterVerbs)
+        val shown = duringCheck.show as Show.Check
+        assertEquals("Совпало", shown.headline)
+        assertEquals(null, duringCheck.command)
     }
 
     @Test
@@ -368,7 +599,7 @@ class TurnTest {
 
         val second = turnOf(draw = PredeterminedDraw(listOf(go)))
 
-        assertEquals(Show.Home(strips = listOf("Учим", "Проверка")), second.shown().show)
+        assertEquals(Show.Home(strips = listOf("Учим", "Проверка", "Глаголы")), second.shown().show)
         assertEquals(null, second.shown().command)
     }
 }
