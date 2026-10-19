@@ -26,6 +26,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontFamily
@@ -65,30 +67,46 @@ fun IverbsScreen(turn: Turn, speech: SpeechPort) {
             contentColor = Ink,
         ) {
             when (val show = reaction.show) {
-                is Show.Home -> HomeColumn(show, onLearn = { act(Input.EnterLearn) })
-                is Show.Learn -> LearnColumn(show) { control ->
-                    act(
-                        when (control) {
-                            Control.Ready -> Input.Ready
-                            Control.Again -> Input.Again
-                            Control.Next -> Input.Next
-                        },
-                    )
+                is Show.Home -> HomeColumn(show) { label ->
+                    when (label) {
+                        "Учим" -> act(Input.EnterLearn)
+                        "Проверка" -> act(Input.EnterCheck)
+                    }
                 }
+                is Show.Learn -> LearnColumn(show) { control -> act(control.input()) }
+                is Show.Check -> CheckColumn(show) { control -> act(control.input()) }
             }
         }
     }
 }
 
 @Composable
-private fun HomeColumn(show: Show.Home, onLearn: () -> Unit) {
+private fun HomeColumn(show: Show.Home, onStrip: (String) -> Unit) {
     Column(Modifier.fillMaxSize()) {
-        show.strips.forEach { label ->
+        show.strips.forEachIndexed { index, label ->
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .clickable(enabled = label == "Учим", onClick = onLearn)
+                    .then(
+                        if (index == show.strips.lastIndex) {
+                            Modifier
+                        } else {
+                            Modifier.drawBehind {
+                                val stroke = 1.dp.toPx()
+                                drawLine(
+                                    color = Ink,
+                                    start = Offset(0f, size.height - stroke / 2f),
+                                    end = Offset(size.width, size.height - stroke / 2f),
+                                    strokeWidth = stroke,
+                                )
+                            }
+                        },
+                    )
+                    .clickable(
+                        enabled = label == "Учим" || label == "Проверка",
+                        onClick = { onStrip(label) },
+                    )
                     .padding(horizontal = 28.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
@@ -157,15 +175,74 @@ private fun LearnColumn(show: Show.Learn, onControl: (Control) -> Unit) {
                 )
             }
         }
+        Controls(show.controls, onControl)
+    }
+}
+
+@Composable
+private fun CheckColumn(show: Show.Check, onControl: (Control) -> Unit) {
+    Column(Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 16.dp),
         ) {
-            show.controls.forEach { control ->
-                LearnButton(control, onClick = { onControl(control) })
+            val beforeVerdict = show.forms == null && show.recognised == null
+            Text(
+                text = show.headline,
+                fontFamily = FontFamily.Serif,
+                fontSize = if (beforeVerdict) 36.sp else 40.sp,
+                lineHeight = 1.05.em,
+                color = Ink,
+                modifier = Modifier.padding(bottom = if (beforeVerdict) 0.dp else 16.dp),
+            )
+            val forms = show.forms
+            if (forms != null) {
+                Column(Modifier.padding(top = 12.dp)) {
+                    listOf(forms.infinitive, forms.pastSimple, forms.pastParticiple).forEach { form ->
+                        Text(
+                            text = form,
+                            fontFamily = FontFamily.Serif,
+                            fontSize = 32.sp,
+                            lineHeight = 1.15.em,
+                            color = Ink,
+                        )
+                    }
+                }
+            }
+            val recognised = show.recognised
+            if (recognised != null) {
+                Text(
+                    text = recognised,
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 18.sp,
+                    color = Ink,
+                    minLines = 1,
+                    modifier = Modifier.padding(top = 20.dp),
+                )
             }
         }
+        Controls(show.controls, onControl)
     }
+}
+
+@Composable
+private fun Controls(controls: List<Control>, onControl: (Control) -> Unit) {
+    Column(
+        modifier = Modifier.padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        controls.forEach { control ->
+            LearnButton(control, onClick = { onControl(control) })
+        }
+    }
+}
+
+private fun Control.input(): Input = when (this) {
+    Control.Ready -> Input.Ready
+    Control.Again -> Input.Again
+    Control.Next -> Input.Next
 }
 
 @Composable

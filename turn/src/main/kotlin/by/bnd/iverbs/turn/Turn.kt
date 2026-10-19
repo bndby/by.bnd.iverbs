@@ -49,10 +49,18 @@ sealed interface Show {
         val recognised: String?,
         val controls: List<Control>,
     ) : Show
+
+    data class Check(
+        val headline: String,
+        val forms: Forms?,
+        val recognised: String?,
+        val controls: List<Control>,
+    ) : Show
 }
 
 sealed interface Input {
     data object EnterLearn : Input
+    data object EnterCheck : Input
     data object PhraseEnded : Input
     data class ListeningEnded(val text: String) : Input
     data object Ready : Input
@@ -80,7 +88,8 @@ class Turn(
 
     fun on(input: Input): Reaction {
         val command = when (input) {
-            Input.EnterLearn -> enterLearn()
+            Input.EnterLearn -> enter(Mode.Learn)
+            Input.EnterCheck -> enter(Mode.Check)
             Input.PhraseEnded -> phraseEnded()
             is Input.ListeningEnded -> listeningEnded(input.text)
             Input.Ready -> ready()
@@ -90,16 +99,16 @@ class Turn(
         return Reaction(show = phase.toShow(), command = command)
     }
 
-    private fun enterLearn(): Command? {
+    private fun enter(mode: Mode): Command? {
         if (phase !is Phase.Home) return null
         val drawn = draw.next(list)
-        phase = Phase.Speaking(drawn)
-        return Command.Speak(drawn.phrase())
+        phase = Phase.Speaking(drawn, mode)
+        return Command.Speak(drawn.phrase(mode))
     }
 
     private fun phraseEnded(): Command? {
         val speaking = phase as? Phase.Speaking ?: return null
-        phase = Phase.Listening(speaking.verb)
+        phase = Phase.Listening(speaking.verb, speaking.mode)
         return Command.Listen
     }
 
@@ -107,6 +116,7 @@ class Turn(
         val listening = phase as? Phase.Listening ?: return null
         phase = Phase.Verdict(
             verb = listening.verb,
+            mode = listening.mode,
             recognised = text,
             matched = matches(text, listening.verb.forms),
         )
@@ -117,6 +127,7 @@ class Turn(
         val listening = phase as? Phase.Listening ?: return null
         phase = Phase.Verdict(
             verb = listening.verb,
+            mode = listening.mode,
             recognised = listening.recognised,
             matched = matches(listening.recognised, listening.verb.forms),
         )
@@ -124,24 +135,40 @@ class Turn(
     }
 
     private fun again(): Command? {
+        val mode = phase.modeOrNull() ?: return null
         val current = phase.verbOrNull() ?: return null
-        phase = Phase.Speaking(current)
-        return Command.Speak(current.phrase())
+        phase = Phase.Speaking(current, mode)
+        return Command.Speak(current.phrase(mode))
     }
 
     private fun next(): Command? {
+        val mode = phase.modeOrNull() ?: return null
         if (phase !is Phase.Listening && phase !is Phase.Verdict) return null
         val drawn = draw.next(list)
-        phase = Phase.Speaking(drawn)
-        return Command.Speak(drawn.phrase())
+        phase = Phase.Speaking(drawn, mode)
+        return Command.Speak(drawn.phrase(mode))
     }
 }
 
+private enum class Mode { Learn, Check }
+
 private sealed interface Phase {
     data object Home : Phase
-    data class Speaking(val verb: Verb) : Phase
-    data class Listening(val verb: Verb, val recognised: String = "") : Phase
-    data class Verdict(val verb: Verb, val recognised: String, val matched: Boolean) : Phase
+    data class Speaking(val verb: Verb, val mode: Mode) : Phase
+    data class Listening(val verb: Verb, val mode: Mode, val recognised: String = "") : Phase
+    data class Verdict(
+        val verb: Verb,
+        val mode: Mode,
+        val recognised: String,
+        val matched: Boolean,
+    ) : Phase
+}
+
+private fun Phase.modeOrNull(): Mode? = when (this) {
+    Phase.Home -> null
+    is Phase.Speaking -> mode
+    is Phase.Listening -> mode
+    is Phase.Verdict -> mode
 }
 
 private fun Phase.verbOrNull(): Verb? = when (this) {
@@ -152,28 +179,56 @@ private fun Phase.verbOrNull(): Verb? = when (this) {
 }
 
 private fun Phase.toShow(): Show = when (this) {
-    Phase.Home -> Show.Home(strips = listOf("Учим"))
-    is Phase.Speaking -> Show.Learn(
-        kicker = "Говорит",
-        headline = verb.meaning,
-        forms = verb.forms,
-        recognised = null,
-        controls = listOf(Control.Again),
-    )
-    is Phase.Listening -> Show.Learn(
-        kicker = null,
-        headline = verb.meaning,
-        forms = null,
-        recognised = null,
-        controls = listOf(Control.Ready, Control.Again, Control.Next),
-    )
-    is Phase.Verdict -> Show.Learn(
-        kicker = null,
-        headline = if (matched) "Совпало" else "Не совпало",
-        forms = verb.forms,
-        recognised = recognised,
-        controls = listOf(Control.Again, Control.Next),
-    )
+    Phase.Home -> Show.Home(strips = listOf("Учим", "Проверка"))
+    is Phase.Speaking -> when (mode) {
+        Mode.Learn -> Show.Learn(
+            kicker = "Говорит",
+            headline = verb.meaning,
+            forms = verb.forms,
+            recognised = null,
+            controls = listOf(Control.Again),
+        )
+        Mode.Check -> Show.Check(
+            headline = verb.forms.infinitive,
+            forms = null,
+            recognised = null,
+            controls = listOf(Control.Again),
+        )
+    }
+    is Phase.Listening -> when (mode) {
+        Mode.Learn -> Show.Learn(
+            kicker = null,
+            headline = verb.meaning,
+            forms = null,
+            recognised = null,
+            controls = listOf(Control.Ready, Control.Again, Control.Next),
+        )
+        Mode.Check -> Show.Check(
+            headline = verb.forms.infinitive,
+            forms = null,
+            recognised = null,
+            controls = listOf(Control.Ready, Control.Again, Control.Next),
+        )
+    }
+    is Phase.Verdict -> {
+        val headline = if (matched) "Совпало" else "Не совпало"
+        val controls = listOf(Control.Again, Control.Next)
+        when (mode) {
+            Mode.Learn -> Show.Learn(
+                kicker = null,
+                headline = headline,
+                forms = verb.forms,
+                recognised = recognised,
+                controls = controls,
+            )
+            Mode.Check -> Show.Check(
+                headline = headline,
+                forms = verb.forms,
+                recognised = recognised,
+                controls = controls,
+            )
+        }
+    }
 }
 
 private fun matches(text: String, forms: Forms): Boolean {
@@ -187,7 +242,12 @@ private fun matches(text: String, forms: Forms): Boolean {
     }
 }
 
-private fun Verb.phrase(): Phrase {
+private fun Verb.phrase(mode: Mode): Phrase = when (mode) {
+    Mode.Learn -> learnPhrase()
+    Mode.Check -> Phrase(parts = listOf(PhrasePart.Said(forms.infinitive, Voice.English)))
+}
+
+private fun Verb.learnPhrase(): Phrase {
     val said = listOf(
         PhrasePart.Said(meaning, Voice.Russian),
         PhrasePart.Said(forms.infinitive, Voice.English),
