@@ -1,0 +1,206 @@
+package by.bnd.iverbs
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import by.bnd.iverbs.turn.Control
+import by.bnd.iverbs.turn.Input
+import by.bnd.iverbs.turn.Show
+import by.bnd.iverbs.turn.Turn
+
+private val Paper = Color(0xFFF3EFE6)
+private val Ink = Color(0xFF1C1915)
+
+@Composable
+fun IverbsScreen(turn: Turn, speech: SpeechPort) {
+    var reaction by remember { mutableStateOf(turn.shown()) }
+    val act: (Input) -> Unit = { input ->
+        val next = turn.on(input)
+        reaction = next
+        speech.perform(next.command)
+    }
+    MaterialTheme(
+        colorScheme = lightColorScheme(
+            primary = Ink,
+            onPrimary = Paper,
+            background = Paper,
+            onBackground = Ink,
+            surface = Paper,
+            onSurface = Ink,
+            outline = Ink,
+        ),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+            color = Paper,
+            contentColor = Ink,
+        ) {
+            when (val show = reaction.show) {
+                is Show.Home -> HomeColumn(show, onLearn = { act(Input.EnterLearn) })
+                is Show.Learn -> LearnColumn(show) { control ->
+                    act(
+                        when (control) {
+                            Control.Ready -> Input.Ready
+                            Control.Again -> Input.Again
+                            Control.Next -> Input.Next
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeColumn(show: Show.Home, onLearn: () -> Unit) {
+    Column(Modifier.fillMaxSize()) {
+        show.strips.forEach { label ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clickable(enabled = label == "Учим", onClick = onLearn)
+                    .padding(horizontal = 28.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text(
+                    text = label,
+                    fontFamily = FontFamily.Serif,
+                    fontSize = 48.sp,
+                    color = Ink,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LearnColumn(show: Show.Learn, onControl: (Control) -> Unit) {
+    Column(Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 16.dp),
+        ) {
+            val kicker = show.kicker
+            if (kicker != null) {
+                Text(
+                    text = kicker,
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 13.sp,
+                    letterSpacing = 0.08.em,
+                    color = Ink,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+            }
+            Text(
+                text = show.headline,
+                fontFamily = FontFamily.Serif,
+                fontSize = 40.sp,
+                lineHeight = 1.05.em,
+                color = Ink,
+                modifier = Modifier.padding(bottom = 16.dp),
+            )
+            val forms = show.forms
+            if (forms != null) {
+                Column(Modifier.padding(top = 12.dp)) {
+                    listOf(forms.infinitive, forms.pastSimple, forms.pastParticiple).forEach { form ->
+                        Text(
+                            text = form,
+                            fontFamily = FontFamily.Serif,
+                            fontSize = 32.sp,
+                            lineHeight = 1.15.em,
+                            color = Ink,
+                        )
+                    }
+                }
+            }
+            val recognised = show.recognised
+            if (recognised != null) {
+                Text(
+                    text = recognised,
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 18.sp,
+                    color = Ink,
+                    minLines = 1,
+                    modifier = Modifier.padding(top = 20.dp),
+                )
+            }
+        }
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            show.controls.forEach { control ->
+                LearnButton(control, onClick = { onControl(control) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun LearnButton(control: Control, onClick: () -> Unit) {
+    val modifier = Modifier.fillMaxWidth()
+    val padding = PaddingValues(12.dp)
+    if (control == Control.Ready) {
+        Button(
+            onClick = onClick,
+            modifier = modifier,
+            shape = RectangleShape,
+            contentPadding = padding,
+            elevation = ButtonDefaults.buttonElevation(
+                defaultElevation = 0.dp,
+                pressedElevation = 0.dp,
+                focusedElevation = 0.dp,
+                hoveredElevation = 0.dp,
+            ),
+            colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Paper),
+        ) {
+            Text(text = control.label, fontFamily = FontFamily.Serif, fontSize = 22.sp)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = modifier,
+            shape = RectangleShape,
+            contentPadding = padding,
+            border = BorderStroke(1.dp, Ink),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = Color.Transparent,
+                contentColor = Ink,
+            ),
+        ) {
+            Text(text = control.label, fontFamily = FontFamily.Serif, fontSize = 16.sp)
+        }
+    }
+}
