@@ -2,7 +2,7 @@ package by.bnd.iverbs
 
 import by.bnd.iverbs.turn.Command
 
-/** Заглушка: не говорит, не слушает, не ходит в сеть и не придумывает текст. */
+/** Заглушка речи: не говорит, не слушает и не ходит в сеть. Разрешение и настройки выполняет экран. */
 class SpeechPort {
     fun perform(command: Command?) {
         when (command) {
@@ -10,6 +10,8 @@ class SpeechPort {
             is Command.Speak -> Unit
             Command.Listen -> Unit
             Command.Stop -> Unit
+            Command.RequestPermission -> Unit
+            Command.OpenSettings -> Unit
         }
     }
 }

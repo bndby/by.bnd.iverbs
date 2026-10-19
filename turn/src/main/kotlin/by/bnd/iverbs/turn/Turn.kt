@@ -20,6 +20,8 @@ fun uniformDraw(random: kotlin.random.Random = kotlin.random.Random.Default): Dr
 
 enum class Voice { Russian, English }
 
+enum class Model { RussianSpeech, EnglishSpeech, EnglishRecognition }
+
 sealed interface PhrasePart {
     data class Said(val text: String, val voice: Voice) : PhrasePart
     data object Pause : PhrasePart
@@ -31,6 +33,8 @@ sealed interface Command {
     data class Speak(val phrase: Phrase) : Command
     data object Listen : Command
     data object Stop : Command
+    data object RequestPermission : Command
+    data object OpenSettings : Command
 }
 
 enum class Control(val label: String) {
@@ -62,6 +66,7 @@ sealed interface Show {
         val recognised: String?,
         val controls: List<Control>,
         val nav: List<Control>,
+        val reason: String? = null,
     ) : Show
 
     data class Check(
@@ -70,6 +75,7 @@ sealed interface Show {
         val recognised: String?,
         val controls: List<Control>,
         val nav: List<Control>,
+        val reason: String? = null,
     ) : Show
 }
 
@@ -82,6 +88,19 @@ sealed interface Input {
     data class Toggle(val verb: Verb) : Input
     data object PhraseEnded : Input
     data class ListeningEnded(val text: String) : Input
+    data class ModelDidNotOpen(val model: Model) : Input
+    data object PermissionMissing : Input
+    data object PermissionGranted : Input
+    data object PermissionPromptWillNotShow : Input
+    data object RecognitionDidNotStart : Input
+    data object ListeningBroke : Input
+    data class AbilitiesChecked(
+        val russianSpeech: Boolean,
+        val englishSpeech: Boolean,
+        val englishRecognition: Boolean,
+        val microphone: Boolean,
+        val permissionPrompt: Boolean,
+    ) : Input
     data object Ready : Input
     data object Again : Input
     data object Next : Input
@@ -98,6 +117,7 @@ class Turn(
     private val draw: Draw,
 ) {
     private var phase: Phase = Phase.Home
+    private var abilities = Abilities()
 
     init {
         require(list.all { verb -> set.contains(verb) })
@@ -115,6 +135,13 @@ class Turn(
             is Input.Toggle -> toggle(input.verb)
             Input.PhraseEnded -> phraseEnded()
             is Input.ListeningEnded -> listeningEnded(input.text)
+            is Input.ModelDidNotOpen -> modelDidNotOpen(input.model)
+            Input.PermissionMissing -> permissionMissing()
+            Input.PermissionGranted -> permissionGranted()
+            Input.PermissionPromptWillNotShow -> permissionPromptWillNotShow()
+            Input.RecognitionDidNotStart -> recognitionDidNotStart()
+            Input.ListeningBroke -> listeningBroke()
+            is Input.AbilitiesChecked -> abilitiesChecked(input)
             Input.Ready -> ready()
             Input.Again -> again()
             Input.Next -> next()
@@ -134,9 +161,12 @@ class Turn(
                 recognised = current.recognised,
                 matched = current.matched,
             )
+            is Phase.Blocked -> Covered.Blocked(current.verb, current.mode, current.reason)
         }
         phase = Phase.Verbs(covered)
-        val quiet = covered == null || (covered is Covered.Speaking && !covered.playing)
+        val quiet = covered == null ||
+            covered is Covered.Blocked ||
+            (covered is Covered.Speaking && !covered.playing)
         return if (quiet) null else Command.Stop
     }
 
@@ -155,6 +185,7 @@ class Turn(
                 recognised = covered.recognised,
                 matched = covered.matched,
             )
+            is Covered.Blocked -> phase = Phase.Blocked(covered.verb, covered.mode, covered.reason)
         }
         return null
     }
@@ -192,8 +223,104 @@ class Turn(
             return null
         }
         val drawn = draw.next(list)
-        phase = Phase.Speaking(drawn, mode)
-        return Command.Speak(drawn.phrase(mode))
+        return begin(drawn, mode, stopListening = false)
+    }
+
+    private fun modelDidNotOpen(model: Model): Command? {
+        if (phase is Phase.Verbs) return stopIfCovered()
+        abilities = abilities.closed(model)
+        if (phase is Phase.Listening || phase is Phase.Verdict) return null
+        return holdBlocked()
+    }
+
+    private fun permissionMissing(): Command? {
+        if (phase is Phase.Verbs) return stopIfCovered()
+        abilities = abilities.copy(microphone = false)
+        if (phase is Phase.Listening || phase is Phase.Verdict) return null
+        return holdBlocked()
+    }
+
+    private fun permissionGranted(): Command? {
+        if (phase is Phase.Verbs) return stopIfCovered()
+        abilities = abilities.copy(microphone = true, permissionPrompt = true)
+        if (phase is Phase.Listening || phase is Phase.Verdict) return null
+        return recompute()
+    }
+
+    private fun permissionPromptWillNotShow(): Command? {
+        if (phase is Phase.Verbs) return stopIfCovered()
+        abilities = abilities.copy(permissionPrompt = false)
+        return null
+    }
+
+    private fun abilitiesChecked(input: Input.AbilitiesChecked): Command? {
+        if (phase is Phase.Verbs) return stopIfCovered()
+        abilities = Abilities(
+            russianSpeech = input.russianSpeech,
+            englishSpeech = input.englishSpeech,
+            englishRecognition = input.englishRecognition,
+            microphone = input.microphone,
+            permissionPrompt = input.permissionPrompt,
+        )
+        if (phase is Phase.Listening || phase is Phase.Verdict) return null
+        return recompute()
+    }
+
+    private fun recompute(): Command? {
+        val mode = phase.modeOrNull() ?: return null
+        val verb = phase.verbOrNull() ?: return null
+        if (phase !is Phase.Speaking && phase !is Phase.Blocked) return null
+        val reason = blockReason(mode)
+        val playing = (phase as? Phase.Speaking)?.playing == true
+        if (reason == null) {
+            if (playing) return null
+            phase = Phase.Speaking(verb, mode, playing = false)
+            return null
+        }
+        phase = Phase.Blocked(verb, mode, reason)
+        return if (playing) Command.Stop else null
+    }
+
+    private fun recognitionDidNotStart(): Command? {
+        if (phase is Phase.Verbs) return stopIfCovered()
+        val listening = phase as? Phase.Listening ?: return null
+        val reason = blockReason(listening.mode) ?: Reason.Recognition
+        phase = Phase.Blocked(listening.verb, listening.mode, reason)
+        return Command.Stop
+    }
+
+    private fun listeningBroke(): Command? {
+        if (phase is Phase.Verbs) return stopIfCovered()
+        return null
+    }
+
+    private fun holdBlocked(): Command? {
+        val mode = phase.modeOrNull() ?: return null
+        val verb = phase.verbOrNull() ?: return null
+        val reason = blockReason(mode) ?: return null
+        val stop = (phase as? Phase.Speaking)?.playing == true
+        phase = Phase.Blocked(verb, mode, reason)
+        return if (stop) Command.Stop else null
+    }
+
+    private fun blockReason(mode: Mode): Reason? {
+        val modelOpen = when (mode) {
+            Mode.Learn -> abilities.russianSpeech && abilities.englishSpeech && abilities.englishRecognition
+            Mode.Check -> abilities.englishSpeech && abilities.englishRecognition
+        }
+        if (!modelOpen) return Reason.Model
+        if (!abilities.microphone) return Reason.Microphone
+        return null
+    }
+
+    private fun begin(verb: Verb, mode: Mode, stopListening: Boolean): Command? {
+        val reason = blockReason(mode)
+        if (reason != null) {
+            phase = Phase.Blocked(verb, mode, reason)
+            return if (stopListening) Command.Stop else null
+        }
+        phase = Phase.Speaking(verb, mode)
+        return Command.Speak(verb.phrase(mode))
     }
 
     private fun phraseEnded(): Command? {
@@ -236,6 +363,17 @@ class Turn(
     private fun again(): Command? {
         val mode = phase.modeOrNull() ?: return null
         val current = phase.verbOrNull() ?: return null
+        val reason = blockReason(mode)
+        if (reason != null) {
+            phase = Phase.Blocked(current, mode, reason)
+            return if (reason == Reason.Microphone && abilities.permissionPrompt) {
+                Command.RequestPermission
+            } else if (reason == Reason.Microphone) {
+                Command.OpenSettings
+            } else {
+                null
+            }
+        }
         phase = Phase.Speaking(current, mode)
         return Command.Speak(current.phrase(mode))
     }
@@ -249,8 +387,7 @@ class Turn(
             return stop
         }
         val drawn = draw.next(list)
-        phase = Phase.Speaking(drawn, mode)
-        return Command.Speak(drawn.phrase(mode))
+        return begin(drawn, mode, stopListening = phase is Phase.Listening)
     }
 }
 
@@ -265,6 +402,7 @@ private sealed interface Covered {
         val recognised: String,
         val matched: Boolean,
     ) : Covered
+    data class Blocked(val verb: Verb, val mode: Mode, val reason: Reason) : Covered
 }
 
 private sealed interface Phase {
@@ -278,6 +416,27 @@ private sealed interface Phase {
         val recognised: String,
         val matched: Boolean,
     ) : Phase
+    data class Blocked(val verb: Verb, val mode: Mode, val reason: Reason) : Phase
+}
+
+private enum class Reason(val text: String) {
+    Model("Модель не открылась"),
+    Microphone("Нет разрешения микрофона"),
+    Recognition("Распознавание не стартовало"),
+}
+
+private data class Abilities(
+    val russianSpeech: Boolean = true,
+    val englishSpeech: Boolean = true,
+    val englishRecognition: Boolean = true,
+    val microphone: Boolean = true,
+    val permissionPrompt: Boolean = true,
+)
+
+private fun Abilities.closed(model: Model): Abilities = when (model) {
+    Model.RussianSpeech -> copy(russianSpeech = false)
+    Model.EnglishSpeech -> copy(englishSpeech = false)
+    Model.EnglishRecognition -> copy(englishRecognition = false)
 }
 
 private fun Phase.modeOrNull(): Mode? = when (this) {
@@ -285,6 +444,7 @@ private fun Phase.modeOrNull(): Mode? = when (this) {
     is Phase.Speaking -> mode
     is Phase.Listening -> mode
     is Phase.Verdict -> mode
+    is Phase.Blocked -> mode
 }
 
 private fun Phase.verbOrNull(): Verb? = when (this) {
@@ -292,6 +452,7 @@ private fun Phase.verbOrNull(): Verb? = when (this) {
     is Phase.Speaking -> verb
     is Phase.Listening -> verb
     is Phase.Verdict -> verb
+    is Phase.Blocked -> verb
 }
 
 private val turnNav = listOf(Control.Home, Control.Verbs)
@@ -360,6 +521,25 @@ private fun Phase.toShow(set: List<Verb>, list: List<Verb>): Show = when (this) 
                 nav = turnNav,
             )
         }
+    }
+    is Phase.Blocked -> when (mode) {
+        Mode.Learn -> Show.Learn(
+            kicker = verb.forms.infinitive,
+            headline = reason.text,
+            forms = null,
+            recognised = null,
+            controls = listOf(Control.Again),
+            nav = turnNav,
+            reason = reason.text,
+        )
+        Mode.Check -> Show.Check(
+            headline = verb.forms.infinitive,
+            forms = null,
+            recognised = null,
+            controls = listOf(Control.Again),
+            nav = turnNav,
+            reason = reason.text,
+        )
     }
 }
 

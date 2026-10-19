@@ -886,6 +886,494 @@ class TurnTest {
     }
 
     @Test
+    fun `Учим не начинает фразу без русской озвучки и остаётся без вердикта`() {
+        val turn = turnOf(draw = PredeterminedDraw(listOf(go)))
+        turn.on(Input.ModelDidNotOpen(Model.RussianSpeech))
+
+        val reaction = turn.on(Input.EnterLearn)
+        val learn = reaction.show as Show.Learn
+
+        assertEquals(
+            Show.Learn(
+                kicker = "go",
+                headline = "Модель не открылась",
+                forms = null,
+                recognised = null,
+                controls = listOf(Control.Again),
+                nav = listOf(Control.Home, Control.Verbs),
+                reason = "Модель не открылась",
+            ),
+            learn,
+        )
+        assertEquals(listOf("Ещё раз"), learn.controls.map { it.label })
+        assertEquals(null, reaction.command)
+        assertEquals(reaction.show, turn.shown().show)
+        assertEquals(null, turn.shown().command)
+
+        val next = turn.on(Input.Next)
+        assertEquals("go", (next.show as Show.Learn).kicker)
+        assertEquals("Модель не открылась", (next.show as Show.Learn).reason)
+        assertEquals(null, next.command)
+
+        val ended = turn.on(Input.PhraseEnded)
+        assertEquals("Модель не открылась", (ended.show as Show.Learn).reason)
+        assertEquals(null, ended.command)
+    }
+
+    @Test
+    fun `Проверка начинается без русской озвучки и не начинается без английской`() {
+        val eat = Verb("есть", Forms("eat", "ate", "eaten"))
+        val russian = turnOf(
+            set = listOf(go, eat),
+            list = listOf(go, eat),
+            draw = PredeterminedDraw(listOf(eat)),
+        )
+        russian.on(Input.ModelDidNotOpen(Model.RussianSpeech))
+
+        val check = russian.on(Input.EnterCheck)
+        assertEquals("eat", (check.show as Show.Check).headline)
+        assertEquals(null, (check.show as Show.Check).reason)
+        assertEquals(null, (check.show as Show.Check).forms)
+        assertEquals(Command.Speak(infinitivePhrase("eat")), check.command)
+
+        val learn = turnOf(
+            set = listOf(go, eat),
+            list = listOf(go, eat),
+            draw = PredeterminedDraw(listOf(eat)),
+        )
+        learn.on(Input.ModelDidNotOpen(Model.EnglishSpeech))
+        val blockedLearn = learn.on(Input.EnterLearn)
+        assertEquals("eat", (blockedLearn.show as Show.Learn).kicker)
+        assertEquals("Модель не открылась", (blockedLearn.show as Show.Learn).reason)
+        assertEquals(null, blockedLearn.command)
+
+        val recognition = turnOf(draw = PredeterminedDraw(listOf(go)))
+        recognition.on(Input.ModelDidNotOpen(Model.EnglishRecognition))
+        val blockedCheck = recognition.on(Input.EnterCheck)
+        val shown = blockedCheck.show as Show.Check
+        assertEquals("go", shown.headline)
+        assertEquals("Модель не открылась", shown.reason)
+        assertEquals(listOf("Ещё раз"), shown.controls.map { it.label })
+        assertEquals(null, shown.forms)
+        assertEquals(null, blockedCheck.command)
+    }
+
+    @Test
+    fun `без разрешения микрофона фраза не начинается и вердикта нет`() {
+        val learn = turnOf(draw = PredeterminedDraw(listOf(go)))
+        learn.on(Input.PermissionMissing)
+
+        val learned = learn.on(Input.EnterLearn)
+        val shown = learned.show as Show.Learn
+        assertEquals(
+            Show.Learn(
+                kicker = "go",
+                headline = "Нет разрешения микрофона",
+                forms = null,
+                recognised = null,
+                controls = listOf(Control.Again),
+                nav = listOf(Control.Home, Control.Verbs),
+                reason = "Нет разрешения микрофона",
+            ),
+            shown,
+        )
+        assertEquals(null, learned.command)
+        assertEquals(shown, learn.shown().show)
+
+        val check = turnOf(draw = PredeterminedDraw(listOf(go)))
+        check.on(Input.PermissionMissing)
+        val checked = check.on(Input.EnterCheck)
+        val checkShow = checked.show as Show.Check
+        assertEquals("go", checkShow.headline)
+        assertEquals("Нет разрешения микрофона", checkShow.reason)
+        assertEquals(listOf("Ещё раз"), checkShow.controls.map { it.label })
+        assertEquals(null, checkShow.forms)
+        assertEquals(null, checked.command)
+    }
+
+    @Test
+    fun `закрытая модель важнее отсутствующего разрешения`() {
+        val learn = turnOf(draw = PredeterminedDraw(listOf(go)))
+        learn.on(Input.PermissionMissing)
+        learn.on(Input.ModelDidNotOpen(Model.EnglishRecognition))
+
+        val learned = learn.on(Input.EnterLearn)
+        assertEquals("go", (learned.show as Show.Learn).kicker)
+        assertEquals("Модель не открылась", (learned.show as Show.Learn).reason)
+        assertEquals(listOf("Ещё раз"), (learned.show as Show.Learn).controls.map { it.label })
+        assertEquals(null, learned.command)
+
+        val check = turnOf(draw = PredeterminedDraw(listOf(go)))
+        check.on(Input.ModelDidNotOpen(Model.RussianSpeech))
+        check.on(Input.PermissionMissing)
+        val checked = check.on(Input.EnterCheck)
+        assertEquals("go", (checked.show as Show.Check).headline)
+        assertEquals("Нет разрешения микрофона", (checked.show as Show.Check).reason)
+        assertEquals(null, checked.command)
+    }
+
+    @Test
+    fun `уже прозвучавшая фраза сама не повторяется, если распознавание не стартовало`() {
+        val learn = turnOf(draw = PredeterminedDraw(listOf(go)))
+        learn.on(Input.EnterLearn)
+        assertEquals(Command.Listen, learn.on(Input.PhraseEnded).command)
+
+        val blocked = learn.on(Input.RecognitionDidNotStart)
+        val shown = blocked.show as Show.Learn
+        assertEquals("go", shown.kicker)
+        assertEquals("Распознавание не стартовало", shown.reason)
+        assertEquals(listOf("Ещё раз"), shown.controls.map { it.label })
+        assertEquals(null, shown.forms)
+        assertEquals(null, shown.recognised)
+        assertEquals(Command.Stop, blocked.command)
+
+        val repeated = learn.on(Input.PhraseEnded)
+        assertEquals("Распознавание не стартовало", (repeated.show as Show.Learn).reason)
+        assertEquals(null, repeated.command)
+
+        val check = turnOf(draw = PredeterminedDraw(listOf(go)))
+        check.on(Input.EnterCheck)
+        check.on(Input.PhraseEnded)
+        val checked = check.on(Input.RecognitionDidNotStart)
+        val checkShow = checked.show as Show.Check
+        assertEquals("go", checkShow.headline)
+        assertEquals("Распознавание не стартовало", checkShow.reason)
+        assertEquals(null, checkShow.forms)
+        assertEquals(Command.Stop, checked.command)
+    }
+
+    @Test
+    fun `Ещё раз просит разрешение, а если запрос больше не показывается — открывает настройки`() {
+        val ask = turnOf(draw = PredeterminedDraw(listOf(go)))
+        ask.on(Input.PermissionMissing)
+        ask.on(Input.EnterLearn)
+
+        val requested = ask.on(Input.Again)
+        val asking = requested.show as Show.Learn
+        assertEquals("go", asking.kicker)
+        assertEquals("Нет разрешения микрофона", asking.reason)
+        assertEquals(listOf("Ещё раз"), asking.controls.map { it.label })
+        assertEquals(Command.RequestPermission, requested.command)
+
+        val remembered = ask.on(Input.PermissionPromptWillNotShow)
+        assertEquals("Нет разрешения микрофона", (remembered.show as Show.Learn).reason)
+        assertEquals(null, remembered.command)
+
+        val opened = ask.on(Input.Again)
+        assertEquals("Нет разрешения микрофона", (opened.show as Show.Learn).reason)
+        assertEquals(listOf("Ещё раз"), (opened.show as Show.Learn).controls.map { it.label })
+        assertEquals(Command.OpenSettings, opened.command)
+
+        val model = turnOf(draw = PredeterminedDraw(listOf(go)))
+        model.on(Input.ModelDidNotOpen(Model.EnglishSpeech))
+        model.on(Input.PermissionMissing)
+        model.on(Input.EnterLearn)
+        val stayed = model.on(Input.Again)
+        assertEquals("Модель не открылась", (stayed.show as Show.Learn).reason)
+        assertEquals(null, stayed.command)
+    }
+
+    @Test
+    fun `возврат из настроек показывает текущую причину, а без помехи ждёт Ещё раз`() {
+        val learn = turnOf(draw = PredeterminedDraw(listOf(go)))
+        learn.on(Input.PermissionMissing)
+        learn.on(Input.PermissionPromptWillNotShow)
+        learn.on(Input.EnterLearn)
+        assertEquals(Command.OpenSettings, learn.on(Input.Again).command)
+
+        val model = learn.on(
+            Input.AbilitiesChecked(
+                russianSpeech = false,
+                englishSpeech = true,
+                englishRecognition = true,
+                microphone = true,
+                permissionPrompt = true,
+            ),
+        )
+        val modelShown = model.show as Show.Learn
+        assertEquals("go", modelShown.kicker)
+        assertEquals("Модель не открылась", modelShown.reason)
+        assertEquals(listOf("Ещё раз"), modelShown.controls.map { it.label })
+        assertEquals(null, model.command)
+
+        val microphone = learn.on(
+            Input.AbilitiesChecked(
+                russianSpeech = true,
+                englishSpeech = true,
+                englishRecognition = true,
+                microphone = false,
+                permissionPrompt = false,
+            ),
+        )
+        assertEquals("Нет разрешения микрофона", (microphone.show as Show.Learn).reason)
+        assertEquals(null, microphone.command)
+
+        val clear = learn.on(
+            Input.AbilitiesChecked(
+                russianSpeech = true,
+                englishSpeech = true,
+                englishRecognition = true,
+                microphone = true,
+                permissionPrompt = true,
+            ),
+        )
+        val waiting = clear.show as Show.Learn
+        assertEquals(null, waiting.reason)
+        assertEquals("Ход ждёт", waiting.kicker)
+        assertEquals("идти", waiting.headline)
+        assertEquals(Forms("go", "went", "gone"), waiting.forms)
+        assertEquals(null, waiting.recognised)
+        assertEquals(listOf("Ещё раз"), waiting.controls.map { it.label })
+        assertEquals(null, clear.command)
+
+        val check = turnOf(draw = PredeterminedDraw(listOf(go)))
+        check.on(Input.PermissionMissing)
+        check.on(Input.EnterCheck)
+        val cleared = check.on(
+            Input.AbilitiesChecked(
+                russianSpeech = false,
+                englishSpeech = true,
+                englishRecognition = true,
+                microphone = true,
+                permissionPrompt = true,
+            ),
+        )
+        val checked = cleared.show as Show.Check
+        assertEquals("go", checked.headline)
+        assertEquals(null, checked.reason)
+        assertEquals(null, checked.forms)
+        assertEquals(listOf("Ещё раз"), checked.controls.map { it.label })
+        assertEquals(null, cleared.command)
+    }
+
+    @Test
+    fun `когда Ещё раз проходит, тот же глагол один раз звучит и затем слушается`() {
+        val learn = turnOf(draw = PredeterminedDraw(listOf(go)))
+        learn.on(Input.PermissionMissing)
+        learn.on(Input.EnterLearn)
+        learn.on(
+            Input.AbilitiesChecked(
+                russianSpeech = true,
+                englishSpeech = true,
+                englishRecognition = true,
+                microphone = true,
+                permissionPrompt = true,
+            ),
+        )
+
+        val again = learn.on(Input.Again)
+        val speaking = again.show as Show.Learn
+        assertEquals("Говорит", speaking.kicker)
+        assertEquals("идти", speaking.headline)
+        assertEquals(Forms("go", "went", "gone"), speaking.forms)
+        assertEquals(null, speaking.reason)
+        assertEquals(listOf("Ещё раз"), speaking.controls.map { it.label })
+        assertEquals(Command.Speak(phrase("идти", Forms("go", "went", "gone"))), again.command)
+
+        val listened = learn.on(Input.PhraseEnded)
+        val hearing = listened.show as Show.Learn
+        assertEquals("идти", hearing.headline)
+        assertEquals(null, hearing.forms)
+        assertEquals(null, hearing.reason)
+        assertEquals(listOf("Готово", "Ещё раз", "Дальше"), hearing.controls.map { it.label })
+        assertEquals(Command.Listen, listened.command)
+
+        val check = turnOf(draw = PredeterminedDraw(listOf(go)))
+        check.on(Input.EnterCheck)
+        check.on(Input.PhraseEnded)
+        check.on(Input.RecognitionDidNotStart)
+        val repeated = check.on(Input.Again)
+        val checked = repeated.show as Show.Check
+        assertEquals("go", checked.headline)
+        assertEquals(null, checked.forms)
+        assertEquals(null, checked.reason)
+        assertEquals(listOf("Ещё раз"), checked.controls.map { it.label })
+        assertEquals(Command.Speak(infinitivePhrase("go")), repeated.command)
+
+        val hearingCheck = check.on(Input.PhraseEnded)
+        assertEquals("go", (hearingCheck.show as Show.Check).headline)
+        assertEquals(null, (hearingCheck.show as Show.Check).forms)
+        assertEquals(Command.Listen, hearingCheck.command)
+    }
+
+    @Test
+    fun `из помехи можно уйти на главную и на страницу глаголов, а К ходу не начинает попытку`() {
+        val eat = Verb("есть", Forms("eat", "ate", "eaten"))
+        val learn = turnOf(
+            set = listOf(go, eat),
+            list = listOf(go, eat),
+            draw = PredeterminedDraw(listOf(go, eat)),
+        )
+        learn.on(Input.ModelDidNotOpen(Model.RussianSpeech))
+        learn.on(Input.EnterLearn)
+
+        val page = learn.on(Input.EnterVerbs)
+        assertEquals(listOf("Главная", "К ходу"), (page.show as Show.Verbs).controls.map { it.label })
+        assertEquals(null, page.command)
+
+        val stray = learn.on(Input.ListeningEnded("go went gone"))
+        assertEquals(listOf("Главная", "К ходу"), (stray.show as Show.Verbs).controls.map { it.label })
+        assertEquals(Command.Stop, stray.command)
+
+        val back = learn.on(Input.Back)
+        val shown = back.show as Show.Learn
+        assertEquals("go", shown.kicker)
+        assertEquals("Модель не открылась", shown.reason)
+        assertEquals(listOf("Ещё раз"), shown.controls.map { it.label })
+        assertEquals(null, shown.forms)
+        assertEquals(null, back.command)
+
+        val home = learn.on(Input.Home)
+        assertEquals(Show.Home(strips = listOf("Учим", "Проверка", "Глаголы")), home.show)
+        assertEquals(null, home.command)
+
+        val again = learn.on(Input.EnterLearn)
+        assertEquals("eat", (again.show as Show.Learn).kicker)
+        assertEquals("Модель не открылась", (again.show as Show.Learn).reason)
+        assertEquals(null, again.command)
+
+        val check = turnOf(draw = PredeterminedDraw(listOf(go)))
+        check.on(Input.PermissionMissing)
+        check.on(Input.EnterCheck)
+        val left = check.on(Input.Home)
+        assertEquals(Show.Home(strips = listOf("Учим", "Проверка", "Глаголы")), left.show)
+        assertEquals(null, left.command)
+        val verbs = check.on(Input.EnterVerbs)
+        assertEquals(listOf("Главная"), (verbs.show as Show.Verbs).controls.map { it.label })
+        assertEquals(null, verbs.command)
+    }
+
+    @Test
+    fun `обрыв после старта слушания не показывает три причины и оставляет Готово`() {
+        val learn = turnOf(draw = PredeterminedDraw(listOf(go)))
+        learn.on(Input.EnterLearn)
+        learn.on(Input.PhraseEnded)
+
+        val broke = learn.on(Input.ListeningBroke)
+        val shown = broke.show as Show.Learn
+        assertEquals("идти", shown.headline)
+        assertEquals(null, shown.kicker)
+        assertEquals(null, shown.forms)
+        assertEquals(null, shown.reason)
+        assertEquals(listOf("Готово", "Ещё раз", "Дальше"), shown.controls.map { it.label })
+        assertEquals(null, broke.command)
+
+        val model = learn.on(Input.ModelDidNotOpen(Model.EnglishRecognition))
+        assertEquals(listOf("Готово", "Ещё раз", "Дальше"), (model.show as Show.Learn).controls.map { it.label })
+        assertEquals(null, (model.show as Show.Learn).reason)
+        assertEquals(null, model.command)
+
+        val permission = learn.on(Input.PermissionMissing)
+        assertEquals(listOf("Готово", "Ещё раз", "Дальше"), (permission.show as Show.Learn).controls.map { it.label })
+        assertEquals(null, (permission.show as Show.Learn).reason)
+
+        val ready = learn.on(Input.Ready)
+        assertEquals("Не совпало", (ready.show as Show.Learn).headline)
+        assertEquals("", (ready.show as Show.Learn).recognised)
+        assertEquals(listOf("Ещё раз", "Дальше"), (ready.show as Show.Learn).controls.map { it.label })
+        assertEquals(Command.Stop, ready.command)
+
+        val check = turnOf(draw = PredeterminedDraw(listOf(go)))
+        check.on(Input.EnterCheck)
+        check.on(Input.PhraseEnded)
+        val broken = check.on(Input.ListeningBroke)
+        val checked = broken.show as Show.Check
+        assertEquals("go", checked.headline)
+        assertEquals(null, checked.reason)
+        assertEquals(null, checked.forms)
+        assertEquals(listOf("Готово", "Ещё раз", "Дальше"), checked.controls.map { it.label })
+        assertEquals(null, broken.command)
+
+        val again = check.on(Input.Again)
+        assertEquals("go", (again.show as Show.Check).headline)
+        assertEquals(null, (again.show as Show.Check).reason)
+        assertEquals(listOf("Ещё раз"), (again.show as Show.Check).controls.map { it.label })
+        assertEquals(Command.Speak(infinitivePhrase("go")), again.command)
+    }
+
+    @Test
+    fun `Дальше не начинает фразу, пока режим не может и говорить, и слушать`() {
+        val eat = Verb("есть", Forms("eat", "ate", "eaten"))
+        val learn = turnOf(
+            set = listOf(go, eat),
+            list = listOf(go, eat),
+            draw = PredeterminedDraw(listOf(go, eat)),
+        )
+        learn.on(Input.EnterLearn)
+        learn.on(Input.PhraseEnded)
+        learn.on(Input.PermissionMissing)
+
+        val next = learn.on(Input.Next)
+        val shown = next.show as Show.Learn
+        assertEquals("eat", shown.kicker)
+        assertEquals("Нет разрешения микрофона", shown.reason)
+        assertEquals(listOf("Ещё раз"), shown.controls.map { it.label })
+        assertEquals(Command.Stop, next.command)
+
+        val check = turnOf(
+            set = listOf(go, eat),
+            list = listOf(go, eat),
+            draw = PredeterminedDraw(listOf(go, eat)),
+        )
+        check.on(Input.EnterCheck)
+        check.on(Input.PhraseEnded)
+        check.on(Input.ListeningEnded("мимо"))
+        check.on(Input.ModelDidNotOpen(Model.EnglishSpeech))
+        val blocked = check.on(Input.Next)
+        val checked = blocked.show as Show.Check
+        assertEquals("eat", checked.headline)
+        assertEquals("Модель не открылась", checked.reason)
+        assertEquals(listOf("Ещё раз"), checked.controls.map { it.label })
+        assertEquals(null, blocked.command)
+    }
+
+    @Test
+    fun `выданное разрешение снимает только эту причину и не начинает фразу`() {
+        val learn = turnOf(draw = PredeterminedDraw(listOf(go)))
+        learn.on(Input.PermissionMissing)
+        learn.on(Input.PermissionPromptWillNotShow)
+        learn.on(Input.EnterLearn)
+
+        val granted = learn.on(Input.PermissionGranted)
+        val waiting = granted.show as Show.Learn
+        assertEquals(null, waiting.reason)
+        assertEquals("Ход ждёт", waiting.kicker)
+        assertEquals("идти", waiting.headline)
+        assertEquals(Forms("go", "went", "gone"), waiting.forms)
+        assertEquals(listOf("Ещё раз"), waiting.controls.map { it.label })
+        assertEquals(null, granted.command)
+
+        val model = turnOf(draw = PredeterminedDraw(listOf(go)))
+        model.on(Input.ModelDidNotOpen(Model.EnglishSpeech))
+        model.on(Input.PermissionMissing)
+        model.on(Input.EnterCheck)
+        val still = model.on(Input.PermissionGranted)
+        val checked = still.show as Show.Check
+        assertEquals("go", checked.headline)
+        assertEquals("Модель не открылась", checked.reason)
+        assertEquals(listOf("Ещё раз"), checked.controls.map { it.label })
+        assertEquals(null, still.command)
+    }
+
+    @Test
+    fun `если модель закрылась, пока фраза звучит, слушание не открывается`() {
+        val learn = turnOf(draw = PredeterminedDraw(listOf(go)))
+        assertEquals(
+            Command.Speak(phrase("идти", Forms("go", "went", "gone"))),
+            learn.on(Input.EnterLearn).command,
+        )
+
+        val blocked = learn.on(Input.ModelDidNotOpen(Model.RussianSpeech))
+        assertEquals("go", (blocked.show as Show.Learn).kicker)
+        assertEquals("Модель не открылась", (blocked.show as Show.Learn).reason)
+        assertEquals(Command.Stop, blocked.command)
+
+        val ended = learn.on(Input.PhraseEnded)
+        assertEquals("Модель не открылась", (ended.show as Show.Learn).reason)
+        assertEquals(null, ended.command)
+    }
+
+    @Test
     fun `новый запуск открывает главную и не хранит незаконченный ход`() {
         val first = turnOf(draw = PredeterminedDraw(listOf(go)))
         first.on(Input.EnterLearn)

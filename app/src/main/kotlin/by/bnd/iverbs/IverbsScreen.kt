@@ -1,5 +1,15 @@
 package by.bnd.iverbs
 
+import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,33 +45,58 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import by.bnd.iverbs.turn.Command
 import by.bnd.iverbs.turn.Control
 import by.bnd.iverbs.turn.Input
 import by.bnd.iverbs.turn.Show
 import by.bnd.iverbs.turn.Turn
 import by.bnd.iverbs.turn.Verb
 import by.bnd.iverbs.turn.VerbRow
+import java.util.Locale
 
 private val Paper = Color(0xFFF3EFE6)
 private val Ink = Color(0xFF1C1915)
+private const val Microphone = Manifest.permission.RECORD_AUDIO
 
 @Composable
 fun IverbsScreen(turn: Turn, speech: SpeechPort, onList: (List<Verb>) -> Unit) {
-    var reaction by remember { mutableStateOf(turn.shown()) }
+    val context = LocalContext.current
+    val report = remember { mutableStateOf<(Input) -> Unit>({}) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        reportPermission(report.value, context, granted)
+    }
+    val settingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        val granted = context.checkSelfPermission(Microphone) == PackageManager.PERMISSION_GRANTED
+        reportPermission(report.value, context, granted)
+    }
+    var reaction by remember {
+        val missing = context.checkSelfPermission(Microphone) != PackageManager.PERMISSION_GRANTED
+        mutableStateOf(if (missing) turn.on(Input.PermissionMissing) else turn.shown())
+    }
     val act: (Input) -> Unit = { input ->
         val next = turn.on(input)
         reaction = next
-        speech.perform(next.command)
+        when (val command = next.command) {
+            Command.RequestPermission -> permissionLauncher.launch(Microphone)
+            Command.OpenSettings -> settingsLauncher.launch(settingsIntent(context))
+            else -> speech.perform(command)
+        }
         val verbs = next.show as? Show.Verbs
         if (verbs != null) {
             onList(verbs.rows.filter { it.marked }.map { it.verb })
         }
     }
+    SideEffect { report.value = act }
     MaterialTheme(
         colorScheme = lightColorScheme(
             primary = Ink,
@@ -145,49 +181,54 @@ private fun LearnColumn(show: Show.Learn, onControl: (Control) -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 16.dp),
         ) {
-            val kicker = show.kicker
-            if (kicker != null) {
+            val reason = show.reason
+            if (reason != null) {
+                BlockedText(infinitive = show.kicker.orEmpty(), reason = reason)
+            } else {
+                val kicker = show.kicker
+                if (kicker != null) {
+                    Text(
+                        text = kicker,
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 13.sp,
+                        letterSpacing = 0.08.em,
+                        color = Ink,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                    )
+                }
                 Text(
-                    text = kicker,
-                    fontFamily = FontFamily.SansSerif,
-                    fontSize = 13.sp,
-                    letterSpacing = 0.08.em,
+                    text = show.headline,
+                    fontFamily = FontFamily.Serif,
+                    fontSize = 40.sp,
+                    lineHeight = 1.05.em,
                     color = Ink,
-                    modifier = Modifier.padding(vertical = 8.dp),
+                    modifier = Modifier.padding(bottom = 16.dp),
                 )
-            }
-            Text(
-                text = show.headline,
-                fontFamily = FontFamily.Serif,
-                fontSize = 40.sp,
-                lineHeight = 1.05.em,
-                color = Ink,
-                modifier = Modifier.padding(bottom = 16.dp),
-            )
-            val forms = show.forms
-            if (forms != null) {
-                Column(Modifier.padding(top = 12.dp)) {
-                    listOf(forms.infinitive, forms.pastSimple, forms.pastParticiple).forEach { form ->
-                        Text(
-                            text = form,
-                            fontFamily = FontFamily.Serif,
-                            fontSize = 32.sp,
-                            lineHeight = 1.15.em,
-                            color = Ink,
-                        )
+                val forms = show.forms
+                if (forms != null) {
+                    Column(Modifier.padding(top = 12.dp)) {
+                        listOf(forms.infinitive, forms.pastSimple, forms.pastParticiple).forEach { form ->
+                            Text(
+                                text = form,
+                                fontFamily = FontFamily.Serif,
+                                fontSize = 32.sp,
+                                lineHeight = 1.15.em,
+                                color = Ink,
+                            )
+                        }
                     }
                 }
-            }
-            val recognised = show.recognised
-            if (recognised != null) {
-                Text(
-                    text = recognised,
-                    fontFamily = FontFamily.SansSerif,
-                    fontSize = 18.sp,
-                    color = Ink,
-                    minLines = 1,
-                    modifier = Modifier.padding(top = 20.dp),
-                )
+                val recognised = show.recognised
+                if (recognised != null) {
+                    Text(
+                        text = recognised,
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 18.sp,
+                        color = Ink,
+                        minLines = 1,
+                        modifier = Modifier.padding(top = 20.dp),
+                    )
+                }
             }
         }
         Controls(show.controls, onControl)
@@ -204,39 +245,44 @@ private fun CheckColumn(show: Show.Check, onControl: (Control) -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 16.dp),
         ) {
-            val beforeVerdict = show.forms == null && show.recognised == null
-            Text(
-                text = show.headline,
-                fontFamily = FontFamily.Serif,
-                fontSize = if (beforeVerdict) 36.sp else 40.sp,
-                lineHeight = 1.05.em,
-                color = Ink,
-                modifier = Modifier.padding(bottom = if (beforeVerdict) 0.dp else 16.dp),
-            )
-            val forms = show.forms
-            if (forms != null) {
-                Column(Modifier.padding(top = 12.dp)) {
-                    listOf(forms.infinitive, forms.pastSimple, forms.pastParticiple).forEach { form ->
-                        Text(
-                            text = form,
-                            fontFamily = FontFamily.Serif,
-                            fontSize = 32.sp,
-                            lineHeight = 1.15.em,
-                            color = Ink,
-                        )
+            val reason = show.reason
+            if (reason != null) {
+                BlockedText(infinitive = show.headline, reason = reason)
+            } else {
+                val beforeVerdict = show.forms == null && show.recognised == null
+                Text(
+                    text = show.headline,
+                    fontFamily = FontFamily.Serif,
+                    fontSize = if (beforeVerdict) 36.sp else 40.sp,
+                    lineHeight = 1.05.em,
+                    color = Ink,
+                    modifier = Modifier.padding(bottom = if (beforeVerdict) 0.dp else 16.dp),
+                )
+                val forms = show.forms
+                if (forms != null) {
+                    Column(Modifier.padding(top = 12.dp)) {
+                        listOf(forms.infinitive, forms.pastSimple, forms.pastParticiple).forEach { form ->
+                            Text(
+                                text = form,
+                                fontFamily = FontFamily.Serif,
+                                fontSize = 32.sp,
+                                lineHeight = 1.15.em,
+                                color = Ink,
+                            )
+                        }
                     }
                 }
-            }
-            val recognised = show.recognised
-            if (recognised != null) {
-                Text(
-                    text = recognised,
-                    fontFamily = FontFamily.SansSerif,
-                    fontSize = 18.sp,
-                    color = Ink,
-                    minLines = 1,
-                    modifier = Modifier.padding(top = 20.dp),
-                )
+                val recognised = show.recognised
+                if (recognised != null) {
+                    Text(
+                        text = recognised,
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 18.sp,
+                        color = Ink,
+                        minLines = 1,
+                        modifier = Modifier.padding(top = 20.dp),
+                    )
+                }
             }
         }
         Controls(show.controls, onControl)
@@ -396,4 +442,45 @@ private fun LearnButton(control: Control, onClick: () -> Unit) {
             Text(text = control.label, fontFamily = FontFamily.Serif, fontSize = 16.sp)
         }
     }
+}
+
+@Composable
+private fun BlockedText(infinitive: String, reason: String) {
+    Text(
+        text = infinitive.uppercase(Locale.ROOT),
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 13.sp,
+        letterSpacing = 0.08.em,
+        color = Ink,
+        modifier = Modifier.padding(vertical = 8.dp),
+    )
+    Text(
+        text = reason,
+        fontFamily = FontFamily.Serif,
+        fontSize = 34.sp,
+        lineHeight = 1.1.em,
+        color = Ink,
+        modifier = Modifier.padding(vertical = 12.dp),
+    )
+}
+
+private fun reportPermission(report: (Input) -> Unit, context: Context, granted: Boolean) {
+    if (granted) {
+        report(Input.PermissionGranted)
+        return
+    }
+    val showAgain = context.findActivity()?.shouldShowRequestPermissionRationale(Microphone) ?: true
+    if (!showAgain) report(Input.PermissionPromptWillNotShow)
+    report(Input.PermissionMissing)
+}
+
+private fun settingsIntent(context: Context): Intent =
+    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = Uri.fromParts("package", context.packageName, null)
+    }
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
