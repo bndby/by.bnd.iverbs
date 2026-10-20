@@ -1,5 +1,64 @@
 package by.bnd.iverbs.turn
 
+import kotlin.math.abs
+import kotlin.math.sqrt
+
+/** Цель громкости речи. Оба голоса к ней приводятся, иначе короткое русское слово тише английского. */
+const val SPEECH_RMS = 0.08f
+
+/** Потолок отсчёта после выравнивания: выше начинается срез. */
+const val SPEECH_PEAK = 0.95f
+
+/**
+ * Доля пика, ниже которой отсчёт считается паузой.
+ * Порог от пика, а не абсолютный: иначе усиление само затягивает паузу в замер
+ * и короткое слово так и остаётся тише длинной фразы.
+ */
+const val SPEECH_GATE_RATIO = 0.2f
+
+/**
+ * Громкость звучащей части клипа.
+ * Пауза громкость не разбавляет: иначе короткое слово с тишиной по краям остаётся тихим.
+ */
+fun speechLoudness(samples: FloatArray): Float {
+    var peak = 0f
+    for (sample in samples) {
+        val level = abs(sample)
+        if (level > peak) peak = level
+    }
+    if (peak < 1e-4f) return 0f
+    val gate = peak * SPEECH_GATE_RATIO
+    var sum = 0.0
+    var count = 0
+    for (sample in samples) {
+        if (abs(sample) < gate) continue
+        sum += sample.toDouble() * sample
+        count++
+    }
+    if (count == 0) return 0f
+    return sqrt(sum / count).toFloat()
+}
+
+/**
+ * Тот же клип на общей громкости.
+ * Тишина и шёпот ниже порога не усиливаются. Если до цели упираемся в потолок, берём потолок.
+ */
+fun matchedSpeech(samples: FloatArray): FloatArray {
+    if (samples.isEmpty()) return samples
+    val loudness = speechLoudness(samples)
+    var peak = 0f
+    for (sample in samples) {
+        val level = abs(sample)
+        if (level > peak) peak = level
+    }
+    if (loudness < 1e-4f || peak < 1e-4f) return samples
+    var gain = SPEECH_RMS / loudness
+    val limited = SPEECH_PEAK / peak
+    if (gain > limited) gain = limited
+    if (gain == 1f) return samples
+    return FloatArray(samples.size) { samples[it] * gain }
+}
+
 /** Отсчёт синтеза [-1, 1] в 16-бит. Дробь без умножения на дорожке была бы тишиной. */
 fun pcm16(sample: Float): Short {
     val clamped = sample.coerceIn(-1f, 1f)

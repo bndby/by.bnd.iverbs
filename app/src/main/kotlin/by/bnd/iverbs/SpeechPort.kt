@@ -17,6 +17,7 @@ import by.bnd.iverbs.turn.Model
 import by.bnd.iverbs.turn.Phrase
 import by.bnd.iverbs.turn.PhrasePart
 import by.bnd.iverbs.turn.Voice
+import by.bnd.iverbs.turn.matchedSpeech
 import by.bnd.iverbs.turn.pcm16
 import by.bnd.iverbs.turn.phraseStillPlaying
 import by.bnd.iverbs.turn.staticClipAcceptsWrite
@@ -187,7 +188,7 @@ class SpeechPort(context: android.content.Context) {
             return false
         }
         if (!current(ticket)) return false
-        return write(audio.samples, audio.sampleRate, ticket)
+        return write(matchedSpeech(audio.samples), audio.sampleRate, ticket)
     }
 
     private fun writeSilence(ticket: Int): Boolean {
