@@ -17,6 +17,9 @@ import by.bnd.iverbs.turn.Model
 import by.bnd.iverbs.turn.Phrase
 import by.bnd.iverbs.turn.PhrasePart
 import by.bnd.iverbs.turn.Voice
+import by.bnd.iverbs.turn.pcm16
+import by.bnd.iverbs.turn.phraseStillPlaying
+import by.bnd.iverbs.turn.speechBufferBytes
 import by.bnd.iverbs.turn.utteranceSamples
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.OfflineMoonshineModelConfig
@@ -32,7 +35,6 @@ import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.math.min
 
 data class SpeechAbilities(
     val russianSpeech: Boolean,
@@ -58,8 +60,8 @@ class SpeechPort(context: android.content.Context) {
     private var english: OfflineTts? = null
     private var recognizer: OfflineRecognizer? = null
     private var vad: Vad? = null
+    private val audioLock = Any()
     private var track: AudioTrack? = null
-    private var framesWritten = 0
 
     @Volatile private var stopped = true
     @Volatile private var closed = false
@@ -150,7 +152,6 @@ class SpeechPort(context: android.content.Context) {
     }
 
     private fun playPhrase(phrase: Phrase, ticket: Int): Boolean {
-        framesWritten = 0
         for (part in phrase.parts) {
             if (!current(ticket)) return false
             val played = when (part) {
@@ -159,7 +160,6 @@ class SpeechPort(context: android.content.Context) {
             }
             if (!played) return false
         }
-        awaitDrain(ticket)
         return current(ticket)
     }
 
@@ -185,43 +185,70 @@ class SpeechPort(context: android.content.Context) {
             return false
         }
         if (!current(ticket)) return false
-        write(audio.samples, audio.sampleRate, ticket)
-        return current(ticket)
+        return write(audio.samples, audio.sampleRate, ticket)
     }
 
     private fun writeSilence(ticket: Int): Boolean {
-        val rate = track?.sampleRate ?: DEFAULT_RATE
-        val count = (rate * PAUSE_SECONDS).toInt()
-        write(FloatArray(count), rate, ticket)
+        val silenceMs = (PAUSE_SECONDS * 1000L).toLong()
+        val started = SystemClock.elapsedRealtime()
+        while (current(ticket) && SystemClock.elapsedRealtime() - started < silenceMs) {
+            Thread.sleep(20)
+        }
         return current(ticket)
     }
 
-    private fun write(samples: FloatArray, rate: Int, ticket: Int) {
-        if (!current(ticket) || samples.isEmpty()) return
-        val playing = trackAt(rate)
-        var offset = 0
-        while (offset < samples.size && current(ticket)) {
-            val count = min(CHUNK, samples.size - offset)
-            val wrote = try {
-                playing.write(samples, offset, count, AudioTrack.WRITE_BLOCKING)
-            } catch (_: IllegalStateException) {
-                break
+    private fun write(samples: FloatArray, rate: Int, ticket: Int): Boolean {
+        if (!current(ticket) || samples.isEmpty()) return current(ticket)
+        val pcm = ShortArray(samples.size) { index -> pcm16(samples[index]) }
+        val playing = staticTrack(rate, pcm.size)
+        synchronized(audioLock) {
+            if (!current(ticket)) {
+                playing.release()
+                return false
             }
-            if (wrote <= 0) break
-            offset += wrote
-            framesWritten += wrote
+            track = playing
         }
-    }
-
-    private fun awaitDrain(ticket: Int) {
-        val playing = track ?: return
-        val target = framesWritten
-        val deadline = SystemClock.elapsedRealtime() + DRAIN_LIMIT_MS
-        while (current(ticket) && playing.playbackHeadPosition < target) {
-            if (SystemClock.elapsedRealtime() >= deadline) break
-            val remaining = target - playing.playbackHeadPosition
-            val sleepMs = (remaining * 1000L / playing.sampleRate).coerceIn(20L, 200L)
-            Thread.sleep(sleepMs)
+        try {
+            val accepted = try {
+                playing.write(pcm, 0, pcm.size)
+            } catch (_: IllegalStateException) {
+                0
+            }
+            if (accepted <= 0) return false
+            try {
+                playing.play()
+            } catch (_: IllegalStateException) {
+                return false
+            }
+            val clipFrames = accepted.toLong()
+            val clipRate = rate.coerceAtLeast(1)
+            val clipMs = clipFrames * 1000L / clipRate + DRAIN_PAD_MS
+            val clipStarted = SystemClock.elapsedRealtime()
+            val clipHead = playing.playbackHeadPosition.toLong()
+            val deadline = clipStarted + clipMs
+            while (current(ticket)) {
+                val still = phraseStillPlaying(
+                    headAtStart = clipHead,
+                    headNow = playing.playbackHeadPosition.toLong(),
+                    framesWritten = clipFrames,
+                    elapsedMs = SystemClock.elapsedRealtime() - clipStarted,
+                    durationMs = clipMs,
+                )
+                if (!still) break
+                if (SystemClock.elapsedRealtime() >= deadline) break
+                Thread.sleep(20)
+            }
+            return current(ticket)
+        } finally {
+            synchronized(audioLock) {
+                try {
+                    if (playing.playState == AudioTrack.PLAYSTATE_PLAYING) playing.pause()
+                    playing.stop()
+                } catch (_: IllegalStateException) {
+                }
+                playing.release()
+                if (track === playing) track = null
+            }
         }
     }
 
@@ -455,37 +482,39 @@ class SpeechPort(context: android.content.Context) {
         return created
     }
 
-    private fun trackAt(rate: Int): AudioTrack {
-        val existing = track
-        if (existing != null && existing.sampleRate == rate) {
-            if (existing.playState != AudioTrack.PLAYSTATE_PLAYING) existing.play()
-            return existing
-        }
-        existing?.release()
+    private fun staticTrack(rate: Int, sampleCount: Int): AudioTrack {
+        // Прежний поток звал play() на пустом буфере и просил max(минимум, частота) байт.
+        // Для float-кадра в 4 байта 22050 этой кратности не имеет: дорожка не открывалась,
+        // экран оставался на «Говорит», звука не было. Клип пишется целиком до play().
+        val bytesPerFrame = 2
+        val dataBytes = sampleCount * bytesPerFrame
         val min = AudioTrack.getMinBufferSize(
             rate,
             AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_FLOAT,
+            AudioFormat.ENCODING_PCM_16BIT,
         )
+        val floor = if (min > 0) maxOf(min, dataBytes) else dataBytes
         val attributes = AudioAttributes.Builder()
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .build()
         val format = AudioFormat.Builder()
-            .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
             .setSampleRate(rate)
             .build()
         val created = AudioTrack(
             attributes,
             format,
-            min.coerceAtLeast(rate),
-            AudioTrack.MODE_STREAM,
+            speechBufferBytes(floor, rate, bytesPerFrame),
+            AudioTrack.MODE_STATIC,
             AudioManager.AUDIO_SESSION_ID_GENERATE,
         )
-        created.play()
-        track = created
-        framesWritten = 0
+        if (created.state != AudioTrack.STATE_INITIALIZED) {
+            created.release()
+            throw IllegalStateException("Озвучка не открылась")
+        }
+        created.setVolume(1f)
         return created
     }
 
@@ -511,11 +540,14 @@ class SpeechPort(context: android.content.Context) {
 
     private fun haltAudio() {
         stopped = true
-        track?.let { playing ->
-            try {
-                playing.pause()
-                playing.flush()
-            } catch (_: IllegalStateException) {
+        synchronized(audioLock) {
+            track?.let { playing ->
+                try {
+                    if (playing.playState == AudioTrack.PLAYSTATE_PLAYING) playing.pause()
+                    playing.flush()
+                    playing.stop()
+                } catch (_: IllegalStateException) {
+                }
             }
         }
         stopRecorder()
@@ -548,10 +580,8 @@ class SpeechPort(context: android.content.Context) {
         const val UTTERANCE_SILENCE_SECONDS = 1.2f
         const val MAX_UTTERANCE_SECONDS = 30f
         const val PAUSE_SECONDS = 0.4f
-        const val DEFAULT_RATE = 22050
         const val HEARING_RATE = 16000
-        const val CHUNK = 4096
-        const val DRAIN_LIMIT_MS = 15_000L
+        const val DRAIN_PAD_MS = 150L
         const val RU_MODEL = "ru/ru_RU-dmitri-medium.onnx"
         const val RU_TOKENS = "ru/tokens.txt"
         const val EN_MODEL = "en/en_GB-cori-medium.onnx"
