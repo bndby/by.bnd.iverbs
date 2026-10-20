@@ -93,6 +93,7 @@ sealed interface Show {
         val controls: List<Control>,
         val nav: List<Control>,
         val reason: String? = null,
+        val kicker: String? = null,
     ) : Show
 }
 
@@ -499,11 +500,12 @@ private fun Phase.toShow(set: List<Verb>, list: List<Verb>): Show = when (this) 
             recognised = null,
             controls = listOf(Control.Again),
             nav = turnNav,
+            kicker = if (playing) "Говорит" else null,
         )
     }
     is Phase.Listening -> when (mode) {
         Mode.Learn -> Show.Learn(
-            kicker = null,
+            kicker = "Слушает",
             headline = verb.meaning,
             forms = null,
             recognised = null,
@@ -516,6 +518,7 @@ private fun Phase.toShow(set: List<Verb>, list: List<Verb>): Show = when (this) 
             recognised = null,
             controls = listOf(Control.Ready, Control.Again, Control.Next),
             nav = turnNav,
+            kicker = "Слушает",
         )
     }
     is Phase.Verdict -> {

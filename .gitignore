@@ -7,6 +7,7 @@ captures/
 .externalNativeBuild/
 .cxx/
 *.apk
+!/iverbs.apk
 *.aab
 !dist/iverbs.apk
 *.ap_

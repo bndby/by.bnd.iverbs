@@ -10,7 +10,14 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -43,8 +50,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -66,6 +78,8 @@ private val Paper = Color(0xFFF3EFE6)
 private val Ink = Color(0xFF1C1915)
 private const val Microphone = Manifest.permission.RECORD_AUDIO
 private const val ModelClosed = "Модель не открылась"
+private const val SpeakingNow = "Говорит"
+private const val ListeningNow = "Слушает"
 
 @Composable
 fun IverbsScreen(turn: Turn, speech: SpeechPort, onList: (List<Verb>) -> Unit) {
@@ -255,14 +269,7 @@ private fun LearnColumn(show: Show.Learn, onControl: (Control) -> Unit) {
         } else {
             val kicker = show.kicker
             if (kicker != null) {
-                Text(
-                    text = kicker,
-                    fontFamily = FontFamily.SansSerif,
-                    fontSize = 13.sp,
-                    letterSpacing = 0.08.em,
-                    color = Ink,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                )
+                StatusLine(kicker)
             }
             Text(
                 text = show.headline,
@@ -284,6 +291,10 @@ private fun CheckColumn(show: Show.Check, onControl: (Control) -> Unit) {
         if (reason != null) {
             BlockedText(infinitive = show.headline, reason = reason)
         } else {
+            val kicker = show.kicker
+            if (kicker != null) {
+                StatusLine(kicker)
+            }
             val beforeVerdict = show.forms == null && show.recognised == null
             Text(
                 text = show.headline,
@@ -449,6 +460,66 @@ private fun LearnButton(control: Control, onClick: () -> Unit) {
             ),
         ) {
             Text(text = control.label, fontFamily = FontFamily.Serif, fontSize = 16.sp)
+        }
+    }
+}
+
+@Composable
+private fun StatusLine(text: String) {
+    val live = text == SpeakingNow || text == ListeningNow
+    if (!live) {
+        Text(
+            text = text,
+            fontFamily = FontFamily.SansSerif,
+            fontSize = 13.sp,
+            letterSpacing = 0.08.em,
+            color = Ink,
+            modifier = Modifier.padding(vertical = 8.dp),
+        )
+        return
+    }
+    Row(
+        modifier = Modifier
+            .padding(vertical = 10.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        ActivityMark(listening = text == ListeningNow)
+        Text(
+            text = text,
+            fontFamily = FontFamily.SansSerif,
+            fontSize = 16.sp,
+            letterSpacing = 0.06.em,
+            color = Ink,
+        )
+    }
+}
+
+@Composable
+private fun ActivityMark(listening: Boolean) {
+    val transition = rememberInfiniteTransition(label = "ход")
+    val level by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 700, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "уровень",
+    )
+    Canvas(Modifier.size(14.dp)) {
+        val stroke = 1.25.dp.toPx()
+        if (listening) {
+            drawRect(color = Ink, style = Stroke(width = stroke))
+            val inset = size.minDimension * (0.5f - 0.28f * level)
+            drawRect(
+                color = Ink,
+                topLeft = Offset(inset, inset),
+                size = Size(size.width - inset * 2, size.height - inset * 2),
+            )
+        } else {
+            drawRect(color = Ink.copy(alpha = level))
         }
     }
 }
