@@ -22,6 +22,21 @@ class SpeechPlaybackTest {
     }
 
     @Test
+    fun `статическая дорожка без клипа принимает запись и не считается закрытой`() {
+        assertEquals(true, staticClipAcceptsWrite(TRACK_AWAITING_CLIP))
+        assertEquals(true, staticClipAcceptsWrite(TRACK_CLIP_LOADED))
+        assertEquals(false, staticClipAcceptsWrite(TRACK_UNOPENED))
+        assertEquals(false, staticClipCanPlay(TRACK_AWAITING_CLIP))
+        assertEquals(true, staticClipCanPlay(TRACK_CLIP_LOADED))
+    }
+
+    @Test
+    fun `статический клип равен байтам отсчёта и не раздувается до минимума потока`() {
+        assertEquals(44100, staticClipBytes(sampleCount = 22050, bytesPerFrame = 2))
+        assertEquals(2, staticClipBytes(sampleCount = 1, bytesPerFrame = 2))
+    }
+
+    @Test
     fun `фраза звучит, пока не вышло её время и не сыграны её кадры`() {
         assertEquals(
             true,

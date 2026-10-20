@@ -6,6 +6,32 @@ fun pcm16(sample: Float): Short {
     return (clamped * 32767f).toInt().toShort()
 }
 
+/**
+ * Состояния статической дорожки. Числа те же, что у AudioTrack:
+ * 0 — не открылась, 1 — клип уже в буфере, 2 — создана и ждёт клип.
+ */
+const val TRACK_UNOPENED = 0
+const val TRACK_CLIP_LOADED = 1
+const val TRACK_AWAITING_CLIP = 2
+
+/**
+ * Статическая дорожка сразу после создания ещё без клипа.
+ * Платформа зовёт это «нет данных», а не сбой: писать можно.
+ * Играть можно только когда клип уже лежит в буфере.
+ */
+fun staticClipAcceptsWrite(trackState: Int): Boolean =
+    trackState == TRACK_AWAITING_CLIP || trackState == TRACK_CLIP_LOADED
+
+fun staticClipCanPlay(trackState: Int): Boolean = trackState == TRACK_CLIP_LOADED
+
+/** Байты статического клипа: ровно отсчёт, кратный кадру. Минимум потока сюда не входит. */
+fun staticClipBytes(sampleCount: Int, bytesPerFrame: Int): Int {
+    val frame = bytesPerFrame.coerceAtLeast(1)
+    val bytes = sampleCount.coerceAtLeast(0).toLong() * frame
+    if (bytes == 0L) return frame
+    return (((bytes + frame - 1) / frame) * frame).toInt()
+}
+
 /** Байт в буфере дорожки: не короче минимума платформы и кратен кадру. */
 fun speechBufferBytes(minBufferBytes: Int, sampleRate: Int, bytesPerFrame: Int): Int {
     val frame = bytesPerFrame.coerceAtLeast(1)

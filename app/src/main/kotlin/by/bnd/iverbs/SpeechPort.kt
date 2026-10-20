@@ -19,7 +19,9 @@ import by.bnd.iverbs.turn.PhrasePart
 import by.bnd.iverbs.turn.Voice
 import by.bnd.iverbs.turn.pcm16
 import by.bnd.iverbs.turn.phraseStillPlaying
-import by.bnd.iverbs.turn.speechBufferBytes
+import by.bnd.iverbs.turn.staticClipAcceptsWrite
+import by.bnd.iverbs.turn.staticClipBytes
+import by.bnd.iverbs.turn.staticClipCanPlay
 import by.bnd.iverbs.turn.utteranceSamples
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.OfflineMoonshineModelConfig
@@ -214,7 +216,7 @@ class SpeechPort(context: android.content.Context) {
             } catch (_: IllegalStateException) {
                 0
             }
-            if (accepted <= 0) return false
+            if (accepted <= 0 || !staticClipCanPlay(playing.state)) return false
             try {
                 playing.play()
             } catch (_: IllegalStateException) {
@@ -483,17 +485,11 @@ class SpeechPort(context: android.content.Context) {
     }
 
     private fun staticTrack(rate: Int, sampleCount: Int): AudioTrack {
-        // Прежний поток звал play() на пустом буфере и просил max(минимум, частота) байт.
-        // Для float-кадра в 4 байта 22050 этой кратности не имеет: дорожка не открывалась,
-        // экран оставался на «Говорит», звука не было. Клип пишется целиком до play().
+        // Статическая дорожка после создания ещё без клипа: состояние «нет данных», не сбой.
+        // Прежняя проверка ждала «клип уже в буфере» до записи, бросала исключение и
+        // оставляла экран на «Говорит» без звука. Буфер равен самому клипу: минимум потока
+        // больше короткого слова, и такая дорожка не начинает играть.
         val bytesPerFrame = 2
-        val dataBytes = sampleCount * bytesPerFrame
-        val min = AudioTrack.getMinBufferSize(
-            rate,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-        )
-        val floor = if (min > 0) maxOf(min, dataBytes) else dataBytes
         val attributes = AudioAttributes.Builder()
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -506,11 +502,11 @@ class SpeechPort(context: android.content.Context) {
         val created = AudioTrack(
             attributes,
             format,
-            speechBufferBytes(floor, rate, bytesPerFrame),
+            staticClipBytes(sampleCount, bytesPerFrame),
             AudioTrack.MODE_STATIC,
             AudioManager.AUDIO_SESSION_ID_GENERATE,
         )
-        if (created.state != AudioTrack.STATE_INITIALIZED) {
+        if (!staticClipAcceptsWrite(created.state)) {
             created.release()
             throw IllegalStateException("Озвучка не открылась")
         }
