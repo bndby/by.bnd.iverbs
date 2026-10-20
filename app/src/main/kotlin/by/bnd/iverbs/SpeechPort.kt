@@ -17,6 +17,7 @@ import by.bnd.iverbs.turn.Model
 import by.bnd.iverbs.turn.Phrase
 import by.bnd.iverbs.turn.PhrasePart
 import by.bnd.iverbs.turn.Voice
+import by.bnd.iverbs.turn.utteranceSamples
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.OfflineMoonshineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
@@ -79,16 +80,11 @@ class SpeechPort(context: android.content.Context) {
         }
     }
 
-    /** «Готово»: остановить запись этого слушания, распознать её и отдать текст. */
+    /** «Готово»: остановить запись. Слушание само распознает уже собранный звук. */
     fun finishUtterance() {
         if (closed) return
         finishRequested = true
         stopRecorder()
-        speech.post {
-            if (!finishRequested || closed) return@post
-            finishRequested = false
-            report(Input.ListeningEnded(""))
-        }
     }
 
     /** Заново открыть русскую речь, английскую речь и английское распознавание. */
@@ -263,7 +259,7 @@ class SpeechPort(context: android.content.Context) {
         recorder = mine
         var started = false
         var broke = false
-        val captured = ArrayList<FloatArray>()
+        val recorded = ArrayList<FloatArray>()
         try {
             mine.startRecording()
             started = mine.recordingState == AudioRecord.RECORDSTATE_RECORDING
@@ -272,10 +268,8 @@ class SpeechPort(context: android.content.Context) {
                 return
             }
             val buffer = ShortArray(hearing.config.sileroVadModelConfig.windowSize)
-            val preRoll = FloatArray(HEARING_RATE / 2)
-            var preRollCount = 0
-            var preRollAt = 0
-            var capturing = false
+            var taken = 0
+            val limit = (HEARING_RATE * MAX_UTTERANCE_SECONDS).toInt()
             while (current(ticket) && !finishRequested) {
                 val read = mine.read(buffer, 0, buffer.size)
                 if (!current(ticket)) break
@@ -287,26 +281,20 @@ class SpeechPort(context: android.content.Context) {
                 }
                 if (read == 0) continue
                 val heard = FloatArray(read) { buffer[it] / 32768.0f }
+                recorded.add(heard)
+                taken += heard.size
                 hearing.acceptWaveform(heard)
-                val ended = !hearing.empty() && !hearing.isSpeechDetected()
-                if (hearing.isSpeechDetected() || capturing || ended) {
-                    if (!capturing) {
-                        if (preRollCount > 0) captured.add(copyPreRoll(preRoll, preRollCount, preRollAt))
-                        capturing = true
-                    }
-                    captured.add(heard)
-                } else {
-                    for (sample in heard) {
-                        preRoll[preRollAt] = sample
-                        preRollAt = (preRollAt + 1) % preRoll.size
-                        if (preRollCount < preRoll.size) preRollCount++
-                    }
-                }
-                if (ended) break
+                if (!hearing.empty() && !hearing.isSpeechDetected()) break
+                if (taken >= limit) break
             }
             if (!broke && current(ticket)) {
                 stopRecorder()
-                val samples = join(captured)
+                try {
+                    hearing.flush()
+                } catch (error: Throwable) {
+                    Log.e(TAG, "Хвост фразы не закрылся", error)
+                }
+                val samples = utteranceSamples(drainSegments(hearing), join(recorded))
                 val text = if (samples.isEmpty()) "" else transcribe(reader, samples)
                 if (current(ticket)) report(Input.ListeningEnded(text))
             }
@@ -325,13 +313,13 @@ class SpeechPort(context: android.content.Context) {
         }
     }
 
-    private fun copyPreRoll(preRoll: FloatArray, count: Int, at: Int): FloatArray {
-        val out = FloatArray(count)
-        val start = if (count == preRoll.size) at else 0
-        for (index in out.indices) {
-            out[index] = preRoll[(start + index) % preRoll.size]
+    private fun drainSegments(hearing: Vad): List<FloatArray> {
+        val segments = ArrayList<FloatArray>()
+        while (!hearing.empty()) {
+            segments.add(hearing.front().samples.copyOf())
+            hearing.pop()
         }
-        return out
+        return segments
     }
 
     private fun join(chunks: List<FloatArray>): FloatArray {
@@ -442,7 +430,11 @@ class SpeechPort(context: android.content.Context) {
         }
     }
 
-    private fun openRecorder(): AudioRecord? {
+    private fun openRecorder(): AudioRecord? =
+        openRecorder(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+            ?: openRecorder(MediaRecorder.AudioSource.MIC)
+
+    private fun openRecorder(source: Int): AudioRecord? {
         val min = AudioRecord.getMinBufferSize(
             HEARING_RATE,
             AudioFormat.CHANNEL_IN_MONO,
@@ -450,7 +442,7 @@ class SpeechPort(context: android.content.Context) {
         )
         if (min <= 0) return null
         val created = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
+            source,
             HEARING_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
