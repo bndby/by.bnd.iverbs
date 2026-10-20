@@ -27,6 +27,7 @@ import by.bnd.iverbs.turn.PhrasePart
 import by.bnd.iverbs.turn.Voice as PhraseVoice
 import by.bnd.iverbs.turn.chooseVoice
 import by.bnd.iverbs.turn.englishRecognitionTag
+import java.util.ArrayList
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -47,8 +48,12 @@ sealed interface SpeechPrep {
  * Озвучка и распознавание службами телефона.
  * При запуске докачивает русский голос, английский голос и английскую модель,
  * если их ещё нет. Ход говорит через TextToSpeech и слушает через SpeechRecognizer.
+ * В слушание уходит подсказка: все формы набора, не три формы текущего глагола.
  */
-class SpeechPort(context: Context) {
+class SpeechPort(
+    context: Context,
+    private val biasPhrases: List<String> = emptyList(),
+) {
     private val app = context.applicationContext
     var onOutcome: (Input) -> Unit = {}
 
@@ -789,14 +794,24 @@ class SpeechPort(context: Context) {
         }
         hearing.setRecognitionListener(ListenSession(ticket))
         try {
-            hearing.startListening(recognizeIntent(recognitionLanguage, preferOffline = onDevice))
+            hearing.startListening(
+                recognizeIntent(
+                    language = recognitionLanguage,
+                    preferOffline = onDevice,
+                    bias = biasPhrases,
+                ),
+            )
         } catch (error: Throwable) {
             Log.e(TAG, "Распознавание не стартовало", error)
             if (current(ticket)) report(Input.RecognitionDidNotStart)
         }
     }
 
-    private fun recognizeIntent(language: String, preferOffline: Boolean): Intent =
+    private fun recognizeIntent(
+        language: String,
+        preferOffline: Boolean,
+        bias: List<String> = emptyList(),
+    ): Intent =
         Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
@@ -806,6 +821,9 @@ class SpeechPort(context: Context) {
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 800L)
+            if (bias.isNotEmpty()) {
+                putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, ArrayList(bias))
+            }
         }
 
     private fun stop() {

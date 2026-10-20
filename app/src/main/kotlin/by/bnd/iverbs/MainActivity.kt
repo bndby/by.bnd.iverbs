@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import by.bnd.iverbs.turn.Turn
 import by.bnd.iverbs.turn.beginnerVerbs
+import by.bnd.iverbs.turn.recognitionBias
 import by.bnd.iverbs.turn.uniformDraw
 
 class MainActivity : ComponentActivity() {
@@ -19,7 +20,7 @@ class MainActivity : ComponentActivity() {
             list = list,
             draw = uniformDraw(),
         )
-        speech = SpeechPort(this)
+        speech = SpeechPort(this, biasPhrases = recognitionBias(beginnerVerbs))
         setContent {
             IverbsScreen(turn = turn, speech = speech, onList = saved::write)
         }
