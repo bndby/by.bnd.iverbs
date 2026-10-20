@@ -7,18 +7,14 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 assets="$root/app/src/main/assets"
 jni="$root/app/src/main/jniLibs/arm64-v8a"
 cache="$root/build/speech-fetch"
-limit=$((90 * 1024 * 1024))
+limit=$((110 * 1024 * 1024))
 
 marker=(
-  "$assets/ru/ru_RU-dmitri-medium.onnx"
   "$assets/ru/tokens.txt"
   "$assets/ru/MODEL_CARD"
-  "$assets/en/en_GB-cori-medium.onnx"
   "$assets/en/tokens.txt"
   "$assets/en/MODEL_CARD"
   "$assets/espeak-ng-data/phontab"
-  "$assets/moonshine/encoder_model.ort"
-  "$assets/moonshine/decoder_model_merged.ort"
   "$assets/moonshine/tokens.txt"
   "$assets/moonshine/LICENSE"
   "$assets/silero_vad.onnx"
@@ -26,6 +22,12 @@ marker=(
   "$jni/libonnxruntime.so"
   "$jni/libsherpa-onnx-c-api.so"
   "$jni/libsherpa-onnx-cxx-api.so"
+)
+sized=(
+  "$assets/ru/ru_RU-dmitri-medium.onnx:63149192"
+  "$assets/en/en_GB-cori-high.onnx:38136448"
+  "$assets/moonshine/encoder_model.ort:31326816"
+  "$assets/moonshine/decoder_model_merged.ort:109424400"
 )
 
 ready=1
@@ -35,6 +37,16 @@ for file in "${marker[@]}"; do
     break
   fi
 done
+if [[ "$ready" -eq 1 ]]; then
+  for item in "${sized[@]}"; do
+    file=${item%%:*}
+    size=${item##*:}
+    if [[ ! -f "$file" ]] || [[ "$(stat -c%s "$file")" -ne "$size" ]]; then
+      ready=0
+      break
+    fi
+  done
+fi
 if [[ "$ready" -eq 1 ]]; then
   exit 0
 fi
@@ -58,14 +70,14 @@ download() {
 }
 
 download \
-  "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ru_RU-dmitri-medium-int8.tar.bz2" \
-  "$cache/dmitri.tar.bz2" 21129441
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ru_RU-dmitri-medium.tar.bz2" \
+  "$cache/dmitri.tar.bz2" 67188551
 download \
-  "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-cori-medium-int8.tar.bz2" \
-  "$cache/cori.tar.bz2" 20768736
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-cori-high-int8.tar.bz2" \
+  "$cache/cori.tar.bz2" 35038210
 download \
-  "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2" \
-  "$cache/moonshine.tar.bz2" 29858559
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2" \
+  "$cache/moonshine.tar.bz2" 111266225
 download \
   "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx" \
   "$cache/silero_vad.onnx" 643854
@@ -81,9 +93,9 @@ tar -xjf "$cache/cori.tar.bz2" -C "$work"
 tar -xjf "$cache/moonshine.tar.bz2" -C "$work"
 tar -xjf "$cache/sherpa-android.tar.bz2" -C "$work" ./jniLibs/arm64-v8a
 
-ru="$work/vits-piper-ru_RU-dmitri-medium-int8"
-en="$work/vits-piper-en_GB-cori-medium-int8"
-moon="$work/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27"
+ru="$work/vits-piper-ru_RU-dmitri-medium"
+en="$work/vits-piper-en_GB-cori-high-int8"
+moon="$work/sherpa-onnx-moonshine-base-en-quantized-2026-02-27"
 if ! diff -rq "$ru/espeak-ng-data" "$en/espeak-ng-data" >/dev/null; then
   echo "espeak-ng-data в архивах dmitri и cori различается" >&2
   exit 1
@@ -92,7 +104,7 @@ fi
 rm -rf "$assets/ru" "$assets/en" "$assets/espeak-ng-data" "$assets/moonshine"
 mkdir -p "$assets/ru" "$assets/en" "$assets/moonshine" "$jni"
 cp "$ru/ru_RU-dmitri-medium.onnx" "$ru/tokens.txt" "$ru/MODEL_CARD" "$assets/ru/"
-cp "$en/en_GB-cori-medium.onnx" "$en/tokens.txt" "$en/MODEL_CARD" "$assets/en/"
+cp "$en/en_GB-cori-high.onnx" "$en/tokens.txt" "$en/MODEL_CARD" "$assets/en/"
 cp -a "$ru/espeak-ng-data" "$assets/espeak-ng-data"
 cp "$moon/encoder_model.ort" "$moon/decoder_model_merged.ort" "$moon/tokens.txt" "$moon/LICENSE" "$assets/moonshine/"
 cp "$cache/silero_vad.onnx" "$assets/silero_vad.onnx"
@@ -105,7 +117,7 @@ fi
 
 while read -r size path; do
   if [[ "$size" -ge "$limit" ]]; then
-    echo "файл не меньше 90 МиБ: $path ($size байт)" >&2
+    echo "файл не меньше 110 МиБ: $path ($size байт)" >&2
     exit 1
   fi
 done < <(find "$assets" "$jni" -type f -printf '%s %p\n')

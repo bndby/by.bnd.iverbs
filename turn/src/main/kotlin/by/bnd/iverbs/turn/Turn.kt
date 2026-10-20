@@ -570,8 +570,33 @@ private fun matches(text: String, forms: Forms): Boolean {
     val words = collapsed.split(" ")
     val expected = listOf(forms.infinitive, forms.pastSimple, forms.pastParticiple)
     return words.size == 3 && words.zip(expected).all { (heard, written) ->
-        heard.equals(written, ignoreCase = true)
+        sameSpokenWord(heard, written)
     }
+}
+
+/** Созвучие, которое не является другой формой набора. Текст на экране не подменяется. */
+private val soundAlikes: Map<String, Set<String>> = mapOf(
+    "ate" to setOf("eight"),
+    "been" to setOf("bin", "bean"),
+    "won" to setOf("one"),
+    "heard" to setOf("herd"),
+    "knew" to setOf("new"),
+    "know" to setOf("no"),
+    "sent" to setOf("cent", "scent"),
+    "seen" to setOf("scene"),
+    "meet" to setOf("meat"),
+    "break" to setOf("brake"),
+    "write" to setOf("right", "rite"),
+    "wear" to setOf("where"),
+    "worn" to setOf("warn"),
+    "buy" to setOf("by", "bye"),
+    "saw" to setOf("sore", "soar"),
+)
+
+private fun sameSpokenWord(heard: String, written: String): Boolean {
+    if (heard.equals(written, ignoreCase = true)) return true
+    val alikes = soundAlikes[written.lowercase()] ?: return false
+    return heard.lowercase() in alikes
 }
 
 private fun Verb.phrase(mode: Mode): Phrase = when (mode) {
@@ -579,16 +604,14 @@ private fun Verb.phrase(mode: Mode): Phrase = when (mode) {
     Mode.Check -> Phrase(parts = listOf(PhrasePart.Said(forms.infinitive, Voice.English)))
 }
 
-private fun Verb.learnPhrase(): Phrase {
-    val said = listOf(
+private fun Verb.learnPhrase(): Phrase = Phrase(
+    parts = listOf(
         PhrasePart.Said(meaning, Voice.Russian),
-        PhrasePart.Said(forms.infinitive, Voice.English),
-        PhrasePart.Said(forms.pastSimple, Voice.English),
-        PhrasePart.Said(forms.pastParticiple, Voice.English),
-    )
-    return Phrase(
-        parts = said.flatMapIndexed { index, part ->
-            if (index == 0) listOf(part) else listOf(PhrasePart.Pause, part)
-        },
-    )
-}
+        PhrasePart.Pause,
+        PhrasePart.Said(englishForms(), Voice.English),
+    ),
+)
+
+/** Три формы одной фразой: у модели есть интонация, а не три отдельных слога. */
+private fun Verb.englishForms(): String =
+    "${forms.infinitive}, ${forms.pastSimple}, ${forms.pastParticiple}"

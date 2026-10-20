@@ -39,7 +39,7 @@ Status: resolved
 - [Какие модели Sherpa-ONNX вложить?](issues/09-modeli-sherpa.md): кандидаты на три способности есть, готовый APK несёт одну модель; комплект для приложения не выбран.
 - [Какое значение записать каждому глаголу?](issues/11-znachenie-glagola.md): один инфинитив с самой ранней строки Cambridge, без «ся» в скобках; у make, say и tell уточнение через «или».
 - [Какой облик у четырёх поверхностей?](issues/12-oblik-poverhnostey.md): один столбец «Крупно»; главная — три полосы, в слушании Учим формы прячутся.
-- [Какой комплект моделей вложить?](issues/13-komplekt-modeley.md): int8 Piper dmitri и cori, один espeak-ng-data, Moonshine Tiny English и silero VAD; приложение под GPL-3.
+- [Какой комплект моделей вложить?](issues/13-komplekt-modeley.md): сначала int8 Piper dmitri и cori medium и Moonshine Tiny. Сейчас в спецификации полные веса dmitri, cori high int8 и Moonshine Base; приложение под GPL-3.
 - Спецификация приложения: [spec.md](spec.md), статус `ready-for-agent`. Шов тестов — ход.
 
 ## Not yet specified

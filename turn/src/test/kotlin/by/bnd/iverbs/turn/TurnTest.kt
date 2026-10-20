@@ -643,6 +643,9 @@ class TurnTest {
     @Test
     fun `конец слушания ставит вердикт и показывает текст как его вернул слух`() {
         val be = Verb("быть", Forms("be", "was", "been"))
+        val eat = Verb("есть", Forms("eat", "ate", "eaten"))
+        val win = Verb("побеждать", Forms("win", "won", "won"))
+        val write = Verb("писать", Forms("write", "wrote", "written"))
         val cases = listOf(
             go to "Go,  went, gone." to "Совпало",
             go to "GO WENT GONE" to "Совпало",
@@ -656,6 +659,11 @@ class TurnTest {
             go to "" to "Не совпало",
             be to "be were been" to "Не совпало",
             be to "be was been" to "Совпало",
+            be to "be was bin" to "Совпало",
+            eat to "eat eight eaten" to "Совпало",
+            win to "win one one" to "Совпало",
+            win to "one won won" to "Не совпало",
+            write to "right wrote written" to "Совпало",
         )
         cases.forEach { (verbAndText, headline) ->
             val (verb, text) = verbAndText
@@ -682,6 +690,9 @@ class TurnTest {
     @Test
     fun `конец слушания Проверки ставит вердикт и показывает текст как его вернул слух`() {
         val be = Verb("быть", Forms("be", "was", "been"))
+        val eat = Verb("есть", Forms("eat", "ate", "eaten"))
+        val win = Verb("побеждать", Forms("win", "won", "won"))
+        val write = Verb("писать", Forms("write", "wrote", "written"))
         val cases = listOf(
             go to "Go,  went, gone." to "Совпало",
             go to "GO WENT GONE" to "Совпало",
@@ -695,6 +706,11 @@ class TurnTest {
             go to "" to "Не совпало",
             be to "be were been" to "Не совпало",
             be to "be was been" to "Совпало",
+            be to "be was bin" to "Совпало",
+            eat to "eat eight eaten" to "Совпало",
+            win to "win one one" to "Совпало",
+            win to "one won won" to "Не совпало",
+            write to "right wrote written" to "Совпало",
         )
         cases.forEach { (verbAndText, headline) ->
             val (verb, text) = verbAndText
@@ -1411,11 +1427,7 @@ private fun phrase(meaning: String, forms: Forms) = Phrase(
     parts = listOf(
         PhrasePart.Said(meaning, Voice.Russian),
         PhrasePart.Pause,
-        PhrasePart.Said(forms.infinitive, Voice.English),
-        PhrasePart.Pause,
-        PhrasePart.Said(forms.pastSimple, Voice.English),
-        PhrasePart.Pause,
-        PhrasePart.Said(forms.pastParticiple, Voice.English),
+        PhrasePart.Said("${forms.infinitive}, ${forms.pastSimple}, ${forms.pastParticiple}", Voice.English),
     ),
 )
 

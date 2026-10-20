@@ -581,7 +581,7 @@ class SpeechPort(context: android.content.Context) {
         const val DRAIN_PAD_MS = 150L
         const val RU_MODEL = "ru/ru_RU-dmitri-medium.onnx"
         const val RU_TOKENS = "ru/tokens.txt"
-        const val EN_MODEL = "en/en_GB-cori-medium.onnx"
+        const val EN_MODEL = "en/en_GB-cori-high.onnx"
         const val EN_TOKENS = "en/tokens.txt"
         const val MOONSHINE_ENCODER = "moonshine/encoder_model.ort"
         const val MOONSHINE_DECODER = "moonshine/decoder_model_merged.ort"
