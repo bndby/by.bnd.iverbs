@@ -269,7 +269,7 @@ class TurnTest {
         val shown = back.show as Show.Learn
         assertEquals("идти", shown.headline)
         assertEquals(null, shown.forms)
-        assertEquals(null, shown.kicker)
+        assertEquals("Слушает", shown.kicker)
         assertEquals(listOf("Готово", "Ещё раз", "Дальше"), shown.controls.map { it.label })
         assertEquals(Command.Listen, back.command)
 
@@ -341,6 +341,7 @@ class TurnTest {
         val returned = check.on(Input.Back)
         val checked = returned.show as Show.Check
         assertEquals("go", checked.headline)
+        assertEquals(null, checked.kicker)
         assertEquals(null, checked.forms)
         assertEquals(null, checked.recognised)
         assertEquals(listOf("Ещё раз"), checked.controls.map { it.label })
@@ -384,7 +385,7 @@ class TurnTest {
         assertEquals("идти", shown.headline)
         assertEquals(null, shown.forms)
         assertEquals(null, shown.recognised)
-        assertEquals(null, shown.kicker)
+        assertEquals("Слушает", shown.kicker)
         assertEquals(listOf("Готово", "Ещё раз", "Дальше"), shown.controls.map { it.label })
         assertEquals(Command.Listen, back.command)
 
@@ -403,6 +404,7 @@ class TurnTest {
 
         val returned = check.on(Input.Back)
         assertEquals("go", (returned.show as Show.Check).headline)
+        assertEquals("Слушает", (returned.show as Show.Check).kicker)
         assertEquals(null, (returned.show as Show.Check).forms)
         assertEquals(Command.Listen, returned.command)
 
@@ -581,6 +583,7 @@ class TurnTest {
                 recognised = null,
                 controls = listOf(Control.Again),
                 nav = listOf(Control.Home, Control.Verbs),
+                kicker = "Говорит",
             ),
             reaction.show,
         )
@@ -599,7 +602,7 @@ class TurnTest {
 
         assertEquals(
             Show.Learn(
-                kicker = null,
+                kicker = "Слушает",
                 headline = "идти",
                 forms = null,
                 recognised = null,
@@ -614,7 +617,7 @@ class TurnTest {
     }
 
     @Test
-    fun `конец фразы Проверки открывает слушание и оставляет только инфинитив`() {
+    fun `конец фразы Проверки открывает слушание, пишет Слушает и оставляет инфинитив`() {
         val turn = turnOf(draw = PredeterminedDraw(listOf(go)))
         turn.on(Input.EnterCheck)
 
@@ -628,6 +631,7 @@ class TurnTest {
                 recognised = null,
                 controls = listOf(Control.Ready, Control.Again, Control.Next),
                 nav = listOf(Control.Home, Control.Verbs),
+                kicker = "Слушает",
             ),
             check,
         )
@@ -829,6 +833,7 @@ class TurnTest {
 
         val duringSpeech = turn.on(Input.Again)
         val speaking = duringSpeech.show as Show.Check
+        assertEquals("Говорит", speaking.kicker)
         assertEquals("go", speaking.headline)
         assertEquals(null, speaking.forms)
         assertEquals(null, speaking.recognised)
@@ -837,6 +842,7 @@ class TurnTest {
 
         val spokenAgain = turn.on(Input.PhraseEnded)
         assertEquals(Command.Listen, spokenAgain.command)
+        assertEquals("Слушает", (spokenAgain.show as Show.Check).kicker)
         assertEquals("go", (spokenAgain.show as Show.Check).headline)
         assertEquals(null, (spokenAgain.show as Show.Check).forms)
 
@@ -1140,6 +1146,7 @@ class TurnTest {
         )
         val checked = cleared.show as Show.Check
         assertEquals("go", checked.headline)
+        assertEquals(null, checked.kicker)
         assertEquals(null, checked.reason)
         assertEquals(null, checked.forms)
         assertEquals(listOf("Ещё раз"), checked.controls.map { it.label })
@@ -1172,6 +1179,7 @@ class TurnTest {
 
         val listened = learn.on(Input.PhraseEnded)
         val hearing = listened.show as Show.Learn
+        assertEquals("Слушает", hearing.kicker)
         assertEquals("идти", hearing.headline)
         assertEquals(null, hearing.forms)
         assertEquals(null, hearing.reason)
@@ -1184,6 +1192,7 @@ class TurnTest {
         check.on(Input.RecognitionDidNotStart)
         val repeated = check.on(Input.Again)
         val checked = repeated.show as Show.Check
+        assertEquals("Говорит", checked.kicker)
         assertEquals("go", checked.headline)
         assertEquals(null, checked.forms)
         assertEquals(null, checked.reason)
@@ -1191,6 +1200,7 @@ class TurnTest {
         assertEquals(Command.Speak(infinitivePhrase("go")), repeated.command)
 
         val hearingCheck = check.on(Input.PhraseEnded)
+        assertEquals("Слушает", (hearingCheck.show as Show.Check).kicker)
         assertEquals("go", (hearingCheck.show as Show.Check).headline)
         assertEquals(null, (hearingCheck.show as Show.Check).forms)
         assertEquals(Command.Listen, hearingCheck.command)
@@ -1252,7 +1262,7 @@ class TurnTest {
         val broke = learn.on(Input.ListeningBroke)
         val shown = broke.show as Show.Learn
         assertEquals("идти", shown.headline)
-        assertEquals(null, shown.kicker)
+        assertEquals("Слушает", shown.kicker)
         assertEquals(null, shown.forms)
         assertEquals(null, shown.reason)
         assertEquals(listOf("Готово", "Ещё раз", "Дальше"), shown.controls.map { it.label })
@@ -1279,6 +1289,7 @@ class TurnTest {
         val broken = check.on(Input.ListeningBroke)
         val checked = broken.show as Show.Check
         assertEquals("go", checked.headline)
+        assertEquals("Слушает", checked.kicker)
         assertEquals(null, checked.reason)
         assertEquals(null, checked.forms)
         assertEquals(listOf("Готово", "Ещё раз", "Дальше"), checked.controls.map { it.label })
