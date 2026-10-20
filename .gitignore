@@ -17,9 +17,3 @@ captures/
 *.onnx.json
 *.tar.bz2
 test_wavs/
-
-!app/src/main/assets/ru/ru_RU-dmitri-medium.onnx
-!app/src/main/assets/en/en_GB-cori-high.onnx
-!app/src/main/assets/silero_vad.onnx
-!app/src/main/assets/moonshine/encoder_model.ort
-!app/src/main/assets/moonshine/decoder_model_merged.ort

@@ -13,27 +13,15 @@ android {
 
     defaultConfig {
         applicationId = "by.bnd.iverbs"
-        minSdk = 24
+        minSdk = 31
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.0.4"
-        ndk {
-            abiFilters += "arm64-v8a"
-        }
+        versionCode = 6
+        versionName = "1.0.5"
     }
 
     buildFeatures {
         compose = true
     }
-}
-
-tasks.register<Exec>("fetchSpeechAssets") {
-    workingDir = rootProject.projectDir
-    commandLine("bash", "app/fetch-speech-assets.sh")
-}
-
-tasks.named("preBuild").configure {
-    dependsOn("fetchSpeechAssets")
 }
 
 dependencies {

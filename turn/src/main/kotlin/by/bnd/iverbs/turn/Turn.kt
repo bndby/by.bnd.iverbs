@@ -612,6 +612,6 @@ private fun Verb.learnPhrase(): Phrase = Phrase(
     ),
 )
 
-/** Три формы одной фразой: у модели есть интонация, а не три отдельных слога. */
+/** Три формы одной фразой, чтобы голос произнёс их связно. */
 private fun Verb.englishForms(): String =
     "${forms.infinitive}, ${forms.pastSimple}, ${forms.pastParticiple}"

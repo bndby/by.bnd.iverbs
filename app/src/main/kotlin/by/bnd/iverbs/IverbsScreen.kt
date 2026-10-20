@@ -41,10 +41,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,6 +98,16 @@ fun IverbsScreen(turn: Turn, speech: SpeechPort, onList: (List<Verb>) -> Unit) {
     ) {
         recheck.value(false)
     }
+    var prep by remember { mutableStateOf<SpeechPrep>(SpeechPrep.Working("Проверяем речь")) }
+    var installerSent by remember { mutableStateOf(false) }
+    val prepNow = rememberUpdatedState(prep)
+    val installerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        if (prepNow.value !is SpeechPrep.Ready) {
+            speech.prepare(offerInstaller = false) { prep = it }
+        }
+    }
     var reaction by remember {
         val missing = context.checkSelfPermission(Microphone) != PackageManager.PERMISSION_GRANTED
         mutableStateOf(if (missing) turn.on(Input.PermissionMissing) else turn.shown())
@@ -121,6 +133,19 @@ fun IverbsScreen(turn: Turn, speech: SpeechPort, onList: (List<Verb>) -> Unit) {
             Control.Ready -> speech.finishUtterance()
             Control.Again -> if (reaction.show.modelClosed()) recheck.value(true) else act(Input.Again)
             else -> act(control.input())
+        }
+    }
+    LaunchedEffect(Unit) {
+        speech.prepare(offerInstaller = true) { prep = it }
+    }
+    LaunchedEffect(prep) {
+        val needs = prep as? SpeechPrep.NeedsInstaller ?: return@LaunchedEffect
+        if (installerSent) return@LaunchedEffect
+        installerSent = true
+        try {
+            installerLauncher.launch(needs.intent)
+        } catch (_: Throwable) {
+            prep = SpeechPrep.Failed("Голос не скачался")
         }
     }
     SideEffect {
@@ -158,17 +183,68 @@ fun IverbsScreen(turn: Turn, speech: SpeechPort, onList: (List<Verb>) -> Unit) {
             color = Paper,
             contentColor = Ink,
         ) {
-            when (val show = reaction.show) {
-                is Show.Home -> HomeColumn(show) { label ->
-                    act(Strip.labeled(label).input())
-                }
-                is Show.Verbs -> VerbsColumn(
-                    show,
-                    onControl = press,
-                    onToggle = { verb -> act(Input.Toggle(verb)) },
+            val preparation = prep
+            if (preparation !is SpeechPrep.Ready) {
+                PrepColumn(
+                    message = when (preparation) {
+                        is SpeechPrep.Working -> preparation.message
+                        is SpeechPrep.NeedsInstaller -> preparation.message
+                        is SpeechPrep.Failed -> preparation.message
+                        SpeechPrep.Ready -> "Проверяем речь"
+                    },
+                    onAgain = if (preparation is SpeechPrep.Failed) {
+                        {
+                            installerSent = false
+                            speech.prepare(offerInstaller = true) { prep = it }
+                        }
+                    } else {
+                        null
+                    },
                 )
-                is Show.Learn -> LearnColumn(show, press)
-                is Show.Check -> CheckColumn(show, press)
+            } else {
+                when (val show = reaction.show) {
+                    is Show.Home -> HomeColumn(show) { label ->
+                        act(Strip.labeled(label).input())
+                    }
+                    is Show.Verbs -> VerbsColumn(
+                        show,
+                        onControl = press,
+                        onToggle = { verb -> act(Input.Toggle(verb)) },
+                    )
+                    is Show.Learn -> LearnColumn(show, press)
+                    is Show.Check -> CheckColumn(show, press)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrepColumn(message: String, onAgain: (() -> Unit)?) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = message,
+            fontFamily = FontFamily.Serif,
+            fontSize = 40.sp,
+            lineHeight = 1.05.em,
+            color = Ink,
+        )
+        if (onAgain != null) {
+            OutlinedButton(
+                onClick = onAgain,
+                modifier = Modifier.fillMaxWidth().padding(top = 28.dp),
+                shape = RectangleShape,
+                contentPadding = PaddingValues(12.dp),
+                border = BorderStroke(1.dp, Ink),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = Color.Transparent,
+                    contentColor = Ink,
+                ),
+            ) {
+                Text(text = "Ещё раз", fontFamily = FontFamily.Serif, fontSize = 16.sp)
             }
         }
     }
